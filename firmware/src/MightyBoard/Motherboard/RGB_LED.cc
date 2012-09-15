@@ -46,7 +46,7 @@ void init(){
  //  		ones indicate on, zeros indicate off 
  void setBrightness(uint8_t Channel, uint8_t level, uint8_t LEDs)
  {
- 	uint8_t data[4] = {LED_REG_SELECT, 0, 0 , level};
+     //uint8_t data[4] = {LED_REG_SELECT, 0, 0 , level};
      uint8_t data1[2] = {LED_REG_SELECT, 0};
      uint8_t data2[2] = {0, level};
 
@@ -66,9 +66,9 @@ void init(){
  		return;
  	}
  	
- 	uint8_t error = TWI_write_data(LEDAddress, data1, 2);
+ 	TWI_write_data(LEDAddress, data1, 2); //uint8_t error
      _delay_us(1);
-    error = TWI_write_data(LEDAddress, data2, 2);
+    	TWI_write_data(LEDAddress, data2, 2); //uint8_t error
      _delay_us(1);
  	
      LEDSelect = data1[1];
@@ -81,7 +81,7 @@ void init(){
  //  		ones indicate on, zeros indicate off 
  void setBlinkRate(uint8_t Channel, uint8_t rate, uint8_t LEDs)
  {
-	 uint8_t data[4] = {0 , rate, LED_REG_SELECT, 0};
+	 //uint8_t data[4] = {0 , rate, LED_REG_SELECT, 0};
      uint8_t data1[2] = {LED_REG_SELECT, 0};
      uint8_t data2[2] = {0 , rate};
  	
@@ -99,9 +99,9 @@ void init(){
  	else
  		return;
  	
-     uint8_t error = TWI_write_data(LEDAddress, data1, 2);
+     TWI_write_data(LEDAddress, data1, 2); //uint8_t error
      _delay_us(1);
-     error = TWI_write_data(LEDAddress, data2, 2);
+     TWI_write_data(LEDAddress, data2, 2); //uint8_t error
      _delay_us(1);
      
  	LEDSelect = data1[1];	
@@ -121,7 +121,7 @@ void init(){
  	// clear past select data and turn LEDs full off
  		data[1] = (LEDSelect & ~LEDs) | (LED_OFF & LEDs); 
  		
- 	uint8_t error = TWI_write_data(LEDAddress, data, 2);
+ 	TWI_write_data(LEDAddress, data, 2); //uint8_t error
  	
      LEDSelect = data[1];
  }
@@ -212,9 +212,9 @@ void setColor(uint8_t red, uint8_t green, uint8_t blue, bool clearOld){
 	if(clearOld){
 		clear();}
 	
-	int on, count;
-	on = count = 0;
-    uint8_t leds_on;
+	int count;
+	count = 0;
+    uint8_t leds_on = 0;
 	
     // if any color is all on, set it to ON
     if (red == 255)

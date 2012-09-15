@@ -18,7 +18,7 @@
 #include "EepromMap.hh"
 #include "Eeprom.hh"
 #include <avr/eeprom.h>
-#include <avr/delay.h>
+#include <util/delay.h>
 
 //for thermistor generation
 #include "ThermistorTable.hh"
@@ -77,12 +77,12 @@ void setDefaultsExtruder(int index,uint16_t eeprom_base)
 	uint8_t featuresT0 = eeprom_info::HEATER_0_PRESENT | eeprom_info::HEATER_0_THERMISTOR | eeprom_info::HEATER_0_THERMOCOUPLE;
 	uint8_t featuresT1 = eeprom_info::HEATER_1_PRESENT | eeprom_info::HEATER_1_THERMISTOR | eeprom_info::HEATER_1_THERMOCOUPLE;
 	if( index == 0 ){
-		int slaveId = '12';
+		uint8_t slaveId = 12;
 	    eeprom_write_byte( (uint8_t*)(eeprom_base + toolhead_eeprom_offsets::FEATURES),featuresT0);
 		eeprom_write_byte( (uint8_t*)eeprom_base +toolhead_eeprom_offsets::SLAVE_ID,slaveId);
 	}
 	else{
-		int slaveId = '32';
+		uint8_t slaveId = 32;
 		eeprom_write_byte( (uint8_t*)(eeprom_base + toolhead_eeprom_offsets::FEATURES),featuresT1);
 		eeprom_write_byte( (uint8_t*)eeprom_base +toolhead_eeprom_offsets::SLAVE_ID,slaveId);
 	}
@@ -196,24 +196,32 @@ void setDefaultsPreheat(uint16_t eeprom_base)
  */
 void setDefaultsAcceleration()
 {
-    eeprom_write_byte((uint8_t*)(eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::ACTIVE_OFFSET), 0x00);
-    eeprom_write_word((uint16_t*)(eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::ACCELERATION_RATE_OFFSET), DEFAULT_ACCELERATION);
-    
-    eeprom_write_word((uint16_t*)(eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::AXIS_RATES_OFFSET + 0), DEFAULT_X_ACCELERATION);
-	eeprom_write_word((uint16_t*)(eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::AXIS_RATES_OFFSET + 2), DEFAULT_Y_ACCELERATION);        
-	eeprom_write_word((uint16_t*)(eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::AXIS_RATES_OFFSET + 4), DEFAULT_Z_ACCELERATION);
-	eeprom_write_word((uint16_t*)(eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::AXIS_RATES_OFFSET + 6), DEFAULT_A_ACCELERATION);
-	eeprom_write_word((uint16_t*)(eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::AXIS_RATES_OFFSET + 8), DEFAULT_B_ACCELERATION);
+	eeprom_write_byte((uint8_t *) (eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::ACTIVE_OFFSET), 0x00);
 
-	setEepromFixed16((eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::AXIS_JERK_OFFSET + 0), DEFAULT_MAX_XY_JERK);
-	setEepromFixed16((eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::AXIS_JERK_OFFSET + 4), DEFAULT_MAX_Z_JERK);
-	setEepromFixed16((eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::AXIS_JERK_OFFSET + 6), DEFAULT_MAX_A_JERK);
-	setEepromFixed16((eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::AXIS_JERK_OFFSET + 8), DEFAULT_MAX_B_JERK);
-	
-	eeprom_write_word((uint16_t*)(eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::MINIMUM_SPEED), DEFAULT_MIN_SPEED);
-	
-	eeprom_write_byte((uint8_t*)(eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::DEFAULTS_FLAG), _BV(ACCELERATION_INIT_BIT));
-    
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_ACCELERATION_AXIS + sizeof(uint16_t)*0), DEFAULT_MAX_ACCELERATION_AXIS_X);
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_ACCELERATION_AXIS + sizeof(uint16_t)*1), DEFAULT_MAX_ACCELERATION_AXIS_Y);
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_ACCELERATION_AXIS + sizeof(uint16_t)*2), DEFAULT_MAX_ACCELERATION_AXIS_Z);
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_ACCELERATION_AXIS + sizeof(uint16_t)*3), DEFAULT_MAX_ACCELERATION_AXIS_A);
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_ACCELERATION_AXIS + sizeof(uint16_t)*4), DEFAULT_MAX_ACCELERATION_AXIS_B);
+
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_ACCELERATION_NORMAL_MOVE),   DEFAULT_MAX_ACCELERATION_NORMAL_MOVE);
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_ACCELERATION_EXTRUDER_MOVE), DEFAULT_MAX_ACCELERATION_EXTRUDER_MOVE);
+
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_SPEED_CHANGE + sizeof(uint16_t)*0), DEFAULT_MAX_SPEED_CHANGE_X);
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_SPEED_CHANGE + sizeof(uint16_t)*1), DEFAULT_MAX_SPEED_CHANGE_Y);
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_SPEED_CHANGE + sizeof(uint16_t)*2), DEFAULT_MAX_SPEED_CHANGE_Z);
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_SPEED_CHANGE + sizeof(uint16_t)*3), DEFAULT_MAX_SPEED_CHANGE_A);
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_SPEED_CHANGE + sizeof(uint16_t)*4), DEFAULT_MAX_SPEED_CHANGE_B);
+
+	eeprom_write_dword((uint32_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::JKN_ADVANCE_K),  DEFAULT_JKN_ADVANCE_K);
+	eeprom_write_dword((uint32_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::JKN_ADVANCE_K2), DEFAULT_JKN_ADVANCE_K2);
+
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::EXTRUDER_DEPRIME_STEPS + sizeof(uint16_t)*0), DEFAULT_EXTRUDER_DEPRIME_STEPS_A);
+	eeprom_write_word((uint16_t *)(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::EXTRUDER_DEPRIME_STEPS + sizeof(uint16_t)*1), DEFAULT_EXTRUDER_DEPRIME_STEPS_B);
+
+	eeprom_write_byte((uint8_t *) (eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::SLOWDOWN_FLAG), DEFAULT_SLOWDOWN_FLAG);
+
+	eeprom_write_byte((uint8_t *) (eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::DEFAULTS_FLAG), _BV(ACCELERATION_INIT_BIT));
 }  
 
 /// Writes to EEPROM the default toolhead 'home' values to idicate toolhead offset
@@ -227,8 +235,37 @@ void setDefaultAxisHomePositions()
 	}
 	eeprom_write_block((uint8_t*)&(homes[0]),(uint8_t*)(eeprom_offsets::AXIS_HOME_POSITIONS_STEPS), 20 );
 } 
+
+/// Write to EEPROM the default profiles
+/// These are Abs, Pla, Profile 3, Profile 4
+/// Assumes setDefaultAxisHomePositions() has been called first
+void setDefaultsProfiles(uint16_t eeprom_base) {
+	uint32_t homeOffsets[PROFILES_HOME_POSITIONS_STORED];
+	const char *profileNames[] = {"Abs", "Pla", "Profile1", "Profile2" };
+
+	eeprom_read_block((void *)homeOffsets, (void *)eeprom_offsets::AXIS_HOME_POSITIONS_STEPS, PROFILES_HOME_POSITIONS_STORED * sizeof(uint32_t));
+
+	for (uint8_t i = 0; i < PROFILES_QUANTITY; i ++ ) {
+		uint16_t profile_offset = eeprom_base + i * PROFILE_SIZE;
+
+		//Note this will overflow the string when strlen + 1 < PROFILE_NAME_SIZE, however it doesn't
+		//matter because it will overflow into the same array, and AVR isn't bright enough to segv,
+		//so we ignore that and save the 20 odd cycles it would take to check the length.
+		eeprom_write_block(profileNames[i],(uint8_t*)(profile_offset + profile_offsets::PROFILE_NAME), PROFILE_NAME_SIZE);
+
+		eeprom_write_block((void *)homeOffsets,(void *)(profile_offset + profile_offsets::PROFILE_HOME_POSITIONS_STEPS), PROFILES_HOME_POSITIONS_STORED * sizeof(uint32_t));
+
+    		eeprom_write_word((uint16_t*)(profile_offset + profile_offsets::PROFILE_PREHEAT_RIGHT_TEMP), 220);
+    		eeprom_write_word((uint16_t*)(profile_offset + profile_offsets::PROFILE_PREHEAT_LEFT_TEMP), 220);
+    		eeprom_write_word((uint16_t*)(profile_offset + profile_offsets::PROFILE_PREHEAT_PLATFORM_TEMP), (i == 1)?45:110);
+	}
+	
+	//Initialize a flag to tell us profiles have been initialized
+	eeprom_write_byte((uint8_t*)eeprom_offsets::PROFILES_INIT,PROFILES_INITIALIZED);
+}
+
     
-/// Does a factory reset (resets all defaults except home/endstops, axis direction and tool count)
+/// Does a factory reset (resets all defaults except home/endstops, axis direction, filament lifetime counter and tool count)
 void factoryResetEEPROM() {
 
 	// Default: enstops inverted, Z axis inverted
@@ -240,15 +277,24 @@ void factoryResetEEPROM() {
 	uint16_t vidPid[] = {0x23C1, 0xB404};		/// PID/VID for the MightyBoard!
 
 	/// Write 'MainBoard' settings
-	eeprom_write_block("The Replicator",(uint8_t*)eeprom_offsets::MACHINE_NAME,20); // name is null
+#define THE_REPLICATOR_STR "The Replicator"
+	eeprom_write_block(THE_REPLICATOR_STR,(uint8_t*)eeprom_offsets::MACHINE_NAME,sizeof(THE_REPLICATOR_STR)); // name is null
     eeprom_write_block(&(vRefBase[0]),(uint8_t*)(eeprom_offsets::DIGI_POT_SETTINGS), 5 );
     eeprom_write_byte((uint8_t*)eeprom_offsets::ENDSTOP_INVERSION, endstop_invert);
     eeprom_write_byte((uint8_t*)eeprom_offsets::AXIS_HOME_DIRECTION, home_direction);
     
     setDefaultAxisHomePositions();
+
+    setDefaultsProfiles(eeprom_offsets::PROFILES_BASE);
     
     /// store the default axis lengths for the machine
     eeprom_write_block((uint8_t*)&(replicator_axis_lengths::axis_lengths[0]), (uint8_t*)(eeprom_offsets::AXIS_LENGTHS), 20);
+
+    /// store the default axis steps per mm for the machine
+    eeprom_write_block((uint8_t*)&(replicator_axis_steps_per_mm::axis_steps_per_mm[0]), (uint8_t*)(eeprom_offsets::AXIS_STEPS_PER_MM), 20);
+
+    /// store the default axis max feedrates for the machine
+    eeprom_write_block((uint8_t*)&(replicator_axis_max_feedrates::axis_max_feedrates[0]), (uint8_t*)(eeprom_offsets::AXIS_MAX_FEEDRATES), 20);
     
     setDefaultsAcceleration();
 	
@@ -273,6 +319,21 @@ void factoryResetEEPROM() {
     /// write blink and buzz defaults
     setDefaultLedEffects(eeprom_offsets::LED_STRIP_SETTINGS);
     setDefaultBuzzEffects(eeprom_offsets::BUZZ_SETTINGS);
+
+    // filament trip counter
+    setEepromInt64(eeprom_offsets::FILAMENT_TRIP, 0);
+    setEepromInt64(eeprom_offsets::FILAMENT_TRIP + sizeof(int64_t), 0);
+
+    // Set override gcode temp to off
+    eeprom_write_byte((uint8_t*)eeprom_offsets::OVERRIDE_GCODE_TEMP, 0);
+
+    // Set heaters on during pause to a default of on
+    eeprom_write_byte((uint8_t*)eeprom_offsets::HEAT_DURING_PAUSE, 1);
+
+#ifdef DITTO_PRINT
+    // Sets ditto printing, defaults to off
+    eeprom_write_byte((uint8_t*)eeprom_offsets::DITTO_PRINT_ENABLED, 0);
+#endif
     
     // startup script flag is cleared
     eeprom_write_byte((uint8_t*)eeprom_offsets::FIRST_BOOT_FLAG, 0);
@@ -327,6 +388,10 @@ void fullResetEEPROM() {
 	
 	// toolhead offset defaults
 	storeToolheadToleranceDefaults();
+
+	// filament lifetime counter
+	setEepromInt64(eeprom_offsets::FILAMENT_LIFETIME, 0);
+	setEepromInt64(eeprom_offsets::FILAMENT_LIFETIME + sizeof(int64_t), 0);
 	
 	factoryResetEEPROM();
 

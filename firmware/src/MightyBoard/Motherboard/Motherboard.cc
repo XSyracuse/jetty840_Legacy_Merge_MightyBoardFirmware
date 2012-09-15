@@ -22,7 +22,6 @@
 #include "Motherboard.hh"
 #include "Configuration.hh"
 #include "Steppers.hh"
-#include "Planner.hh"
 #include "Command.hh"
 #include "Interface.hh"
 #include "Commands.hh"
@@ -37,6 +36,43 @@
 #include "Menu_locales.hh"
 
 
+//Warnings to remind us that certain things should be switched off for release
+
+#ifdef ERASE_EEPROM_ON_EVERY_BOOT
+	#warning "Release: ERASE_EEPROM_ON_EVERY_BOOT enabled in Configuration.hh"
+#endif
+
+#ifdef EEPROM_MENU_ENABLE
+	#warning "Release: EEPROM_MENU_ENABLE enabled in Configuration.hh"
+#endif
+
+#ifdef DEBUG_VALUE
+	#warning "Release: DEBUG_VALUE enabled in Configuration.hh"
+#endif
+
+#if defined(HONOR_DEBUG_PACKETS) && (HONOR_DEBUG_PACKETS == 1)
+	#warning "Release: HONOR_DEBUG_PACKETS enabled in Configuration.hh"
+#endif
+
+#ifdef DEBUG_ONSCREEN
+	#warning "Release: DEBUG_ONSCREEN enabled in Configuration.hh"
+#endif
+
+#ifndef JKN_ADVANCE
+	#warning "Release: JKN_ADVANCE disabled in Configuration.hh"
+#endif
+
+#ifdef DEBUG_SLOW_MOTION
+	#warning "Release: DEBUG_SLOW_MOTION enabled in Configuration.hh"
+#endif
+
+#ifdef DEBUG_NO_HEAT_NO_WAIT
+	#warning "Release: DEBUG_NO_HEAT_NO_WAIT enabled in Configuration.hh"
+#endif
+
+#ifdef DEBUG_SRAM_MONITOR
+	#warning "Release: DEBUG_SRAM_MONITOR enabled in Configuration.hh"
+#endif
 
 
 /// Instantiate static motherboard instance
@@ -45,12 +81,14 @@ Motherboard Motherboard::motherboard;
 /// Create motherboard object
 Motherboard::Motherboard() :
         lcd(LCD_STROBE, LCD_DATA, LCD_CLK),
+	messageScreen((unsigned char)0),
+	mainMenu((unsigned char)0),
         interfaceBoard(buttonArray,
             lcd,
             INTERFACE_GLED,
             INTERFACE_RLED,
             &mainMenu,
-            &monitorMode,
+            &mainMenu.utils.monitorMode,
             &messageScreen),
             platform_thermistor(PLATFORM_PIN,0),
             platform_heater(platform_thermistor,platform_element,SAMPLE_INTERVAL_MICROS_THERMISTOR,
@@ -60,6 +98,73 @@ Motherboard::Motherboard() :
 			Extruder_Two(1, EX2_PWR, EX2_FAN, THERMOCOUPLE_CS2,eeprom_offsets::T1_DATA_BASE)
 {
 }
+
+void Motherboard::setupAccelStepperTimer() {
+        TCCR3A = 0x00;
+        TCCR3B = 0x0A; //CTC1 + / 8 = 2Mhz.
+        TCCR3C = 0x00;
+        OCR3A = 0x2000; //1KHz
+        TIMSK3 = 0x02; // turn on OCR3A match interrupt
+}
+
+#define ENABLE_TIMER_INTERRUPTS		TIMSK2 |= (1<<OCIE2A); \
+                			TIMSK3 |= (1<<OCIE3A)
+
+#define DISABLE_TIMER_INTERRUPTS	TIMSK2 &= ~(1<<OCIE2A); \
+                			TIMSK3 &= ~(1<<OCIE3A)
+
+// Initialize Timers
+//	0 = Buzzer
+//	1 = Extruder 2 (PWM)
+//	2 = Microsecond timer, debug LED flasher timer and Advance timer
+//	3 = Stepper
+//	4 = Extruder 1 (PWM)
+//	5 = Debug Timer (unused unless DEBUG_TIMER is defined in StepperAccel.hh)
+//
+//	Timer 0 = 8 bit with PWM
+//	Timers 1,3,4,5 = 16 bit with PWM
+//	Timer 2 = 8 bit with PWM
+
+void Motherboard::initClocks(){
+	// Reset and configure timer 0, the piezo buzzer timer
+	// No interrupt, frequency controlled by Piezo
+	Piezo::shutdown_timer();
+
+	// reset and configure timer 1, the Extruder Two PWM timer
+	// Mode: Fast PWM with TOP=0xFF (8bit) (WGM3:0 = 0101), cycle freq= 976 Hz
+	// Prescaler: 1/64 (250 KHz)
+	// No interrupt, PWM controlled by ExtruderBoard
+	TCCR1A = 0b00000001;
+	TCCR1B = 0b00001011;
+	OCR1A = 0x00;
+	OCR1B = 0x00;
+	TIMSK1 = 0x00;	//No interrupts
+
+	// Reset and configure timer 2, the microsecond timer, debug LED flasher timer and Advance timer.
+	// Timer 2 is 8 bit
+	TCCR2A = 0x02;	// CTC
+	TCCR2B = 0x04;	// prescaler at 1/64
+	OCR2A = 25;	//Generate interrupts 16MHz / 64 / 25 = 10KHz
+	TIMSK2 = 0x02; // turn on OCR2A match interrupt
+
+	// Reset and configure timer 3, the stepper interrupt timer.
+	// ISR(TIMER3_COMPA_vect)
+        setupAccelStepperTimer();
+
+	// reset and configure timer 4, the Extruder One PWM timer
+	// Mode: Fast PWM with TOP=0xFF (8bit) (WGM3:0 = 0101), cycle freq= 976 Hz
+	// Prescaler: 1/64 (250 KHz)
+	// No interrupt, PWM controlled by ExtruderBoard
+	TCCR4A = 0b00000001;
+	TCCR4B = 0b00001011;
+	TCCR4C = 0x00;
+	OCR4A = 0x00;
+	OCR4B = 0x00;
+	TIMSK4 = 0x00;	//No interrupts
+
+	// Timer 5 (unused unless DEBUG_TIMER is defined in StepperAccel.hh)
+}
+
 /// Reset the motherboard to its initial state.
 /// This only resets the board, and does not send a reset
 /// to any attached toolheads.
@@ -68,7 +173,7 @@ void Motherboard::reset(bool hard_reset) {
 
 	// Init steppers
 	uint8_t axis_invert = eeprom::getEeprom8(eeprom_offsets::AXIS_INVERSION, 0);
-    SoftI2cManager::getI2cManager().init();
+	SoftI2cManager::getI2cManager().init();
 	// Z holding indicates that when the Z axis is not in
 	// motion, the machine should continue to power the stepper
 	// coil to ensure that the Z stage does not shift.
@@ -84,76 +189,42 @@ void Motherboard::reset(bool hard_reset) {
 	UART::getHostUART().in.reset();
 	
 	micros = 0;
-		
-	// Reset and configure timer 0, the piezo buzzer timer
-	// Mode: Phase-correct PWM with OCRnA (WGM2:0 = 101)
-	// Prescaler: set on call by piezo function
-	TCCR0A = 0b01;//0b00000011; ////// default mode off / phase correct piezo   
-	TCCR0B = 0b01;//0b00001001; //default pre-scaler 1/1
-	OCR0A = 0;
-	OCR0B = 0;
-	TIMSK0 = 0b00000000; //interrupts default to off   
 	
-	// Reset and configure timer 3, the microsecond and stepper
-	// interrupt timer.
-	TCCR3A = 0x00;
-	TCCR3B = 0x09; // no prescaling
-	TCCR3C = 0x00;
-	OCR3A = INTERVAL_IN_MICROSECONDS * 16;
-	TIMSK3 = 0x02; // turn on OCR3A match interrupt
-	
-	// Reset and configure timer 2, the microsecond timer and debug LED flasher timer.
-	TCCR2A = 0x00;  
-	TCCR2B = 0x0A; /// prescaler at 1/8
-	OCR2A = INTERVAL_IN_MICROSECONDS;  // TODO: update PWM settings to make overflowtime adjustable if desired : currently interupting on overflow
-	OCR2B = 0;
-	TIMSK2 = 0x02; // turn on OCR5A match interrupt
-
-	
-	// reset and configure timer 5 - not currently being used
-	TCCR5A = 0x00;  
-	TCCR5B = 0x09;
-	OCR5A =  0;
-	OCR5B = 0;
-	TIMSK5 = 0x0; 
-	
-	// reset and configure timer 1, the Extruder Two PWM timer
-	// Mode: Fast PWM with TOP=0xFF (8bit) (WGM3:0 = 0101), cycle freq= 976 Hz
-	// Prescaler: 1/64 (250 KHz)
-	TCCR1A = 0b00000001;  
-	TCCR1B = 0b00001011; /// set to PWM mode
-	OCR1A = 0;
-	OCR1B = 0;
-	TIMSK1 = 0b00000000; // no interrupts needed
-	
-	// reset and configure timer 4, the Extruder One PWM timer
-	// Mode: Fast PWM with TOP=0xFF (8bit) (WGM3:0 = 0101), cycle freq= 976 Hz
-	// Prescaler: 1/64 (250 KHz)
-	TCCR4A = 0b00000001;  
-	TCCR4B = 0b00001011; /// set to PWM mode
-	OCR4A = 0;
-	OCR4B = 0;
-	TIMSK4 = 0b00000000; // no interrupts needed
+	initClocks();
 		
 	// Check if the interface board is attached
 	hasInterfaceBoard = interface::isConnected();
+	
+	DEBUG_PIN5.setValue(true);
 
 	if (hasInterfaceBoard) {
+
 		// Make sure our interface board is initialized
         interfaceBoard.init();
 
         // start with welcome script if the first boot flag is not set
         if(eeprom::getEeprom8(eeprom_offsets::FIRST_BOOT_FLAG, 0) == 0)
-            interfaceBoard.pushScreen(&welcomeScreen);
+            interfaceBoard.pushScreen(&mainMenu.utils.welcome);
         else
             // otherwise start with the splash screen.
-            interfaceBoard.pushScreen(&splashScreen);
+            interfaceBoard.pushScreen(&mainMenu.utils.splash);
+            
+        
 
         // Finally, set up the interface
         interface::init(&interfaceBoard, &lcd);
+        
+        DEBUG_PIN5.setValue(false);
+        
+        
+        if(hard_reset){
+			_delay_ms(3000);
+		}
 
         interface_update_timeout.start(interfaceBoard.getUpdateRate());
     }
+    
+    
     
     // interface LEDs default to full ON
     interfaceBlink(0,0);
@@ -174,7 +245,7 @@ void Motherboard::reset(bool hard_reset) {
 		
 		RGB_LED::init();
 		
-		Piezo::startUpTone();
+		Piezo::playTune(TUNE_STARTUP);
 		
 		heatShutdown = false;
 		heatFailMode = HEATER_FAIL_NONE;
@@ -197,7 +268,6 @@ void Motherboard::reset(bool hard_reset) {
 	
 	RGB_LED::setDefaultColor(); 
 	buttonWait = false;	
-	
 }
 
 /// Get the number of microseconds that have passed since
@@ -211,14 +281,36 @@ micros_t Motherboard::getCurrentMicros() {
 }
 
 /// Run the motherboard interrupt
-void Motherboard::doInterrupt() {
+void Motherboard::doStepperInterrupt() {
+	//We never ignore interrupts on pause, because when paused, we might 
+	//extrude filament to change it or fix jams
 
-	//micros += INTERVAL_IN_MICROSECONDS;
-	// Do not move steppers if the board is in a paused state
-	if (command::isPaused()) return;
-	steppers::doInterrupt();
+	DISABLE_TIMER_INTERRUPTS;
+	sei();
+
+	steppers::doStepperInterrupt();
 	
+	cli();
+	ENABLE_TIMER_INTERRUPTS;
+
+#ifdef ANTI_CLUNK_PROTECTION
+	//Because it's possible another stepper interrupt became due whilst
+	//we were processing the last interrupt, and had stepper interrupts
+	//disabled, we compare the counter to the requested interrupt time
+	//to see if it overflowed.  If it did, then we reset the counter, and
+	//schedule another interrupt for very shortly into the future.
+	if ( TCNT3 >= OCR3A ) {
+		OCR3A = 0x01;	//We set the next interrupt to 1 interval, because this will cause the interrupt to  fire again
+				//on the next chance it has after exiting this interrupt, i.e. it gets queued.
+
+		TCNT3 = 0;	//Reset the timer counter
+
+		//debug_onscreen1 ++;
+	}
+#endif
 }
+
+
 bool connectionsErrorTriggered = false;
 void Motherboard::heaterFail(HeaterFailMode mode){
 
@@ -255,7 +347,7 @@ void Motherboard::startButtonWait(){
 }
 
 // set an error message on the interface and wait for user button press
-void Motherboard::errorResponse(char msg[], bool reset){
+void Motherboard::errorResponse(const prog_uchar msg[], bool reset){
 	interfaceBoard.errorMessage(msg);
 	startButtonWait();
 	reset_request = reset;
@@ -277,9 +369,6 @@ uint8_t Motherboard::GetErrorStatus(){
 bool triggered = false;
 // main motherboard loop
 void Motherboard::runMotherboardSlice() {
-	
-	
-    
     // check for user button press
     // update interface screen as necessary
 	if (hasInterfaceBoard) {
@@ -291,7 +380,7 @@ void Motherboard::runMotherboardSlice() {
 			stagger = STAGGER_MID;
 		}
 	}
-			   
+
     if(isUsingPlatform()) {
 		// manage heating loops for the HBP
 		platform_heater.manage_temperature();
@@ -310,12 +399,12 @@ void Motherboard::runMotherboardSlice() {
 			buttonWait = false;
 			interfaceBoard.popScreen();
 			if(reset_request)
-				host::stopBuild();
+				host::stopBuildNow();
 			triggered = false;
 		}
 		
 	}
-	
+
 	// if no user input for USER_INPUT_TIMEOUT, shutdown heaters and warn user
     // don't do this if a heat failure has occured ( in this case heaters are already shutdown and separate error messaging used)
 	if(user_input_timeout.hasElapsed() && !heatShutdown && (host::getHostState() != host::HOST_STATE_BUILDING_FROM_SD) && (host::getHostState() != host::HOST_STATE_BUILDING))
@@ -339,7 +428,7 @@ void Motherboard::runMotherboardSlice() {
 		Extruder_Two.getExtruderHeater().set_target_temperature(0);
 		platform_heater.set_target_temperature(0);
 	}
-	
+			   
     // respond to heatshutdown.  response only needs to be called once
 	if(heatShutdown && !triggered && !Piezo::isPlaying())
 	{
@@ -363,16 +452,18 @@ void Motherboard::runMotherboardSlice() {
 				break;
 			case HEATER_FAIL_NOT_PLUGGED_IN:
 				interfaceBoard.errorMessage(HEATER_FAIL_NOT_PLUGGED_IN_MSG);//,79);
-                startButtonWait();
-                heatShutdown = false;
-                return;
+                		startButtonWait();
+                		heatShutdown = false;
+                		return;
+			default:
+				break;
 		}
         // blink LEDS red
 		RGB_LED::errorSequence();
 		// disable command processing and steppers
 		host::heatShutdown();
 		command::heatShutdown();
-		planner::abort();
+		steppers::abort();
         for(int i = 0; i < STEPPER_COUNT; i++)
 			steppers::enableAxis(i, false);
 	}
@@ -388,9 +479,6 @@ void Motherboard::runMotherboardSlice() {
 		Extruder_Two.runExtruderSlice();
 		stagger = STAGGER_INTERFACE;
 	}
-	
-	
-
 }
 
 // reset user timeout to start from zero
@@ -398,17 +486,18 @@ void Motherboard::resetUserInputTimeout(){
 	user_input_timeout.start(USER_INPUT_TIMEOUT);
 }
 
-#define MICROS_INTERVAL 128
+//Frequency of Timer 2
+//100 = (1.0 / ( 16MHz / 64 / 25 = 10KHz)) * 1000000
+#define MICROS_INTERVAL 100
 
 void Motherboard::UpdateMicros(){
-	micros += MICROS_INTERVAL;//_IN_MICROSECONDS;
-
+	micros += MICROS_INTERVAL;	//_IN_MICROSECONDS;
 }
 
 
 /// Timer three comparator match interrupt
 ISR(TIMER3_COMPA_vect) {
-	Motherboard::getBoard().doInterrupt();
+	Motherboard::getBoard().doStepperInterrupt();
 }
 
 
@@ -481,14 +570,19 @@ int blinked_so_far = 0;
 /// Number of overflows remaining on the current overflow blink cycle
 int interface_ovfs_remaining = 0;
 
-uint16_t blink_overflow_counter = 0;
+uint8_t blink_overflow_counter = 0;
+
+volatile micros_t m2;
 
 /// Timer 2 overflow interrupt
 ISR(TIMER2_COMPA_vect) {
-	
 	Motherboard::getBoard().UpdateMicros();
+
+#ifdef JKN_ADVANCE
+	steppers::doExtruderInterrupt();
+#endif
 	
-	if(blink_overflow_counter++ <= 0x080)
+	if(blink_overflow_counter++ <= 0xA4)
 			return;
 	
 	blink_overflow_counter = 0;
@@ -535,23 +629,6 @@ ISR(TIMER2_COMPA_vect) {
 
 }
 
-// piezo buzzer update
-// this interrupt gets garbled with the much more rapid stepper interrupt
-ISR(TIMER0_COMPA_vect)
-{
-  Piezo::doInterrupt();
-}
-
-// HBP PWM
-void pwmHBP_On(bool on) {
-	if (on) {
-		TCCR5A |= 0b00100000; /// turn on OC5B PWM output
-	} else {
-		TCCR5A &= 0b11001111; /// turn off OC5B PWM output
-	}
-}
-
-
 void Motherboard::setUsingPlatform(bool is_using) {
   using_platform = is_using;
 }
@@ -559,7 +636,6 @@ void Motherboard::setUsingPlatform(bool is_using) {
 void Motherboard::setValve(bool on) {
   	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
 		//setUsingPlatform(false);
-		//pwmHBP_On(false);
 		EXTRA_FET.setDirection(true);
 		EXTRA_FET.setValue(on);
 	}
@@ -570,10 +646,42 @@ void BuildPlatformHeatingElement::setHeatingElement(uint8_t value) {
 	// PWM'd PID implementation.  We reduce the MV to one bit, essentially.
 	// It works relatively well.
   	ATOMIC_BLOCK(ATOMIC_RESTORESTATE) {
-		pwmHBP_On(false);
 		HBP_HEAT.setValue(value != 0);
 	}
   
 }
 
 
+#ifdef DEBUG_VALUE
+
+//Sets the debug leds to value
+//This is in C, as we don't want C++ causing issues
+//Note this is quite slow.
+
+void setDebugValue(uint8_t value) {
+	static bool initialized = false;
+
+	if ( ! initialized ) {
+		DEBUG_PIN1.setDirection(true);
+		DEBUG_PIN2.setDirection(true);
+		DEBUG_PIN3.setDirection(true);
+		DEBUG_PIN4.setDirection(true);
+		DEBUG_PIN5.setDirection(true);
+		DEBUG_PIN6.setDirection(true);
+		DEBUG_PIN7.setDirection(true);
+		DEBUG_PIN8.setDirection(true);
+
+		initialized = true;
+	}
+
+        DEBUG_PIN1.setValue(value & 0x80);
+        DEBUG_PIN2.setValue(value & 0x40);
+        DEBUG_PIN3.setValue(value & 0x20);
+        DEBUG_PIN4.setValue(value & 0x10);
+        DEBUG_PIN5.setValue(value & 0x08);
+        DEBUG_PIN6.setValue(value & 0x04);
+        DEBUG_PIN7.setValue(value & 0x02);
+        DEBUG_PIN8.setValue(value & 0x01);
+}
+
+#endif

@@ -59,12 +59,16 @@ private:
         /// TODO: Delete this.
         bool building;                  ///< True if the bot is building
         
-        uint8_t buildPercentage;
-
         uint8_t waitingMask;            ///< Mask of buttons the interface is
                                         ///< waiting on.
     
         bool screen_locked;             /// set to true in case of catastrophic failure (ie heater cuttoff triggered)
+
+	uint16_t buttonRepetitions;	/// Number of times a button has been repeated whilst held down
+					/// used for continuous buttons and speed scaling of incrementers/decrementers
+
+	bool lockoutButtonRepetitionsClear; /// Used to lockout the clearing of buttonRepetitions
+
 public:
         /// Construct an interface board.
         /// \param[in] button array to read from
@@ -89,6 +93,10 @@ public:
         /// service the button input pad.
 	void doInterrupt();
 
+        /// This is called for a specific button and returns true if the
+        /// button is currently depressed
+        bool isButtonPressed(ButtonArray::ButtonName button);
+
         /// Add a new screen to the stack. This automatically calls reset()
         /// and then update() on the screen, to ensure that it displays
         /// properly. If there are more than SCREEN_STACK_DEPTH screens already
@@ -96,9 +104,6 @@ public:
         /// \param[in] newScreen Screen to display.
 	void pushScreen(Screen* newScreen);
 	
-	/// set the build percentage to be displayed in monitor mode
-	void setBuildPercentage(uint8_t percent);
-
     /// Remove the current screen from the stack. If there is only one screen
     /// being displayed, then this function does nothing.
 	void popScreen();
@@ -129,7 +134,7 @@ public:
 	bool buttonPushed();
 	
 	/// push Error Message Screen
-	void errorMessage(char buf[]);
+	void errorMessage(const prog_uchar buf[]);
     
     /// lock screen so that no pushes/pops can occur
     /// used in the case of heater failure to force restart
@@ -138,6 +143,13 @@ public:
     /// push screen onto the stack but don't update - this is used to create
     /// screen queue
     void pushNoUpdate(Screen *newScreen);
+    
+    /// re-initialize LCD
+    void resetLCD();
+
+    /// Returns the number of times a button has been held down
+    /// Only applicable to continuous buttons
+    uint16_t getButtonRepetitions(void);
 };
 
 #endif

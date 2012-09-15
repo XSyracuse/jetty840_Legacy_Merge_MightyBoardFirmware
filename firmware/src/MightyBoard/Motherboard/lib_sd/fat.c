@@ -248,7 +248,6 @@ struct fat_fs_struct* fat_open(struct partition_struct* partition)
 #endif
       )
         return 0;
-
 #if USE_DYNAMIC_MEMORY
     struct fat_fs_struct* fs = malloc(sizeof(*fs));
     if(!fs)
@@ -279,7 +278,6 @@ struct fat_fs_struct* fat_open(struct partition_struct* partition)
 #endif
         return 0;
     }
-    
     return fs;
 }
 
@@ -316,10 +314,11 @@ uint8_t fat_read_header(struct fat_fs_struct* fs)
 {
     if(!fs)
         return 0;
-
+	
     struct partition_struct* partition = fs->partition;
     if(!partition)
         return 0;
+
 
     /* read fat parameters */
 #if FAT_FAT32_SUPPORT
@@ -331,14 +330,20 @@ uint8_t fat_read_header(struct fat_fs_struct* fs)
     if(!partition->device_read(partition_offset + 0x0b, buffer, sizeof(buffer)))
         return 0;
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
     uint16_t bytes_per_sector = ltoh16(*((uint16_t*) &buffer[0x00]));
     uint16_t reserved_sectors = ltoh16(*((uint16_t*) &buffer[0x03]));
+#pragma GCC diagnostic pop
     uint8_t sectors_per_cluster = buffer[0x02];
     uint8_t fat_copies = buffer[0x05];
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
     uint16_t max_root_entries = ltoh16(*((uint16_t*) &buffer[0x06]));
     uint16_t sector_count_16 = ltoh16(*((uint16_t*) &buffer[0x08]));
     uint16_t sectors_per_fat = ltoh16(*((uint16_t*) &buffer[0x0b]));
     uint32_t sector_count = ltoh32(*((uint32_t*) &buffer[0x15]));
+#pragma GCC diagnostic pop
 #if FAT_FAT32_SUPPORT
     uint32_t sectors_per_fat32 = ltoh32(*((uint32_t*) &buffer[0x19]));
     uint32_t cluster_root_dir = ltoh32(*((uint32_t*) &buffer[0x21]));
@@ -424,7 +429,6 @@ uint8_t fat_read_header(struct fat_fs_struct* fs)
         header->root_dir_cluster = cluster_root_dir;
     }
 #endif
-
     return 1;
 }
 
@@ -1964,8 +1968,11 @@ uint8_t fat_write_dir_entry(const struct fat_fs_struct* fs, struct fat_dir_entry
 #if FAT_FAT32_SUPPORT
     *((uint16_t*) &buffer[0x14]) = htol16((uint16_t) (dir_entry->cluster >> 16));
 #endif
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstrict-aliasing"
     *((uint16_t*) &buffer[0x1a]) = htol16(dir_entry->cluster);
     *((uint32_t*) &buffer[0x1c]) = htol32(dir_entry->file_size);
+#pragma GCC diagnostic pop
 
     /* write to disk */
 #if FAT_LFN_SUPPORT
@@ -2350,6 +2357,10 @@ void fat_set_file_modification_time(struct fat_dir_entry_struct* dir_entry, uint
         ((uint16_t) sec >> 1) ;
 }
 #endif
+
+offset_t fat_get_file_size(const struct fat_file_struct* fd){
+	return fd->dir_entry.file_size;
+}
 
 /**
  * \ingroup fat_fs

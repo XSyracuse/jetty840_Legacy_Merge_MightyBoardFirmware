@@ -39,9 +39,6 @@ bool isConnected() {
 	return (InterfaceDetect.getValue());
 
 }
-void setBuildPercentage(uint8_t percent){
-	board->setBuildPercentage(percent);
-}
 
 void init(InterfaceBoard* board_in, LiquidCrystalSerial* lcd_in) {
     board = board_in;
@@ -58,6 +55,10 @@ void pushNoUpdate(Screen *newScreen){
 
 void popScreen() {
         board->popScreen();
+}
+
+bool isButtonPressed(ButtonArray::ButtonName button) {
+        return board->isButtonPressed(button);
 }
 
 void doInterrupt() {

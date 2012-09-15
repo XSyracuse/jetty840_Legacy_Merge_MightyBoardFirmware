@@ -4,6 +4,7 @@
 // TODO: Kill this, should be hanlded by build system.
 #ifdef HAS_INTERFACE_BOARD
 
+#include "Main.hh"
 #include "Steppers.hh"
 #include "Commands.hh"
 #include "Errors.hh"
@@ -20,8 +21,8 @@
 #include "Eeprom.hh"
 #include <avr/eeprom.h>
 #include "RGB_LED.hh"
-#include "Planner.hh"
 #include "stdio.h"
+#include "Piezo.hh"
 #include "Menu_locales.hh"
 
 
@@ -44,9 +45,7 @@ enum sucessState{
 uint8_t levelSuccess;
 uint8_t filamentSuccess;
 
-SplashScreen::SplashScreen(){
-	hold_on = false;
-}
+uint32_t homePosition[PROFILES_HOME_POSITIONS_STORED];
 
 void SplashScreen::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
 
@@ -56,7 +55,17 @@ void SplashScreen::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
 		lcd.writeFromPgmspace(SPLASH1_MSG);
 
 		lcd.setCursor(0,1);
+#ifdef STACK_PAINT
+		if ( hold_on ) {
+			lcd.writeFromPgmspace(CLEAR_MSG);
+			lcd.setCursor(0,1);
+               		lcd.writeString((char *)"Free SRAM ");
+                	lcd.writeFloat((float)StackCount(), 0, LCD_SCREEN_WIDTH);
+		}
+		else lcd.writeFromPgmspace(SPLASH2_MSG);
+#else
 		lcd.writeFromPgmspace(SPLASH2_MSG);
+#endif
 
 		// display internal version number if it exists
 		if (internal_version != 0){
@@ -98,13 +107,17 @@ void SplashScreen::notifyButtonPressed(ButtonArray::ButtonName button) {
 	switch (button) {
 		case ButtonArray::CENTER:
 			interface::popScreen();
+			SetHold(false);
 			break;
         case ButtonArray::LEFT:
 			interface::popScreen();
+			SetHold(false);
 			break;
         case ButtonArray::RIGHT:
         case ButtonArray::DOWN:
         case ButtonArray::UP:
+			break;
+		default:
 			break;
 
 	}
@@ -114,8 +127,9 @@ void SplashScreen::reset() {
 	
 }
 
-HeaterPreheat::HeaterPreheat(){
-	itemCount = 4;
+HeaterPreheat::HeaterPreheat(uint8_t optionsMask) :
+	Menu(optionsMask, (uint8_t)4),
+	monitorMode((uint8_t)0) {
 	reset();
 }
 
@@ -329,7 +343,7 @@ void WelcomeScreen::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
                 
                 break;
             case WELCOME_DONE:
-				host::stopBuild();
+				host::stopBuildNow();
                 interface::popScreen();
                 break;
             
@@ -341,6 +355,8 @@ void WelcomeScreen::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
 void WelcomeScreen::notifyButtonPressed(ButtonArray::ButtonName button) {
 	
 	Point position;
+
+	FilamentScreen *filament = &Motherboard::getBoard().mainMenu.utils.filament.filament;
 	
 	switch (button) {
 		case ButtonArray::CENTER:
@@ -358,15 +374,15 @@ void WelcomeScreen::notifyButtonPressed(ButtonArray::ButtonName button) {
                      Motherboard::getBoard().interfaceBlink(0,0);
                     welcomeState++;
                     if(eeprom::getEeprom8(eeprom_offsets::TOOL_COUNT, 1) == 1)
-                        filament.setScript(FILAMENT_STARTUP_SINGLE);
+                        filament->setScript(FILAMENT_STARTUP_SINGLE);
 					else
-                        filament.setScript(FILAMENT_STARTUP_DUAL);
-					interface::pushScreen(&filament);
+                        filament->setScript(FILAMENT_STARTUP_DUAL);
+					interface::pushScreen(filament);
                     break;
                 case WELCOME_PRINT_FROM_SD:
                      Motherboard::getBoard().interfaceBlink(0,0);
                     welcomeState++;
-                    interface::pushScreen(&sdmenu);
+                    interface::pushScreen(&Motherboard::getBoard().mainMenu.sdMenu);
                     break;
                 default:
                     needsRedraw = true;
@@ -392,15 +408,15 @@ void WelcomeScreen::notifyButtonPressed(ButtonArray::ButtonName button) {
                     welcomeState++;
                     
                     if(eeprom::getEeprom8(eeprom_offsets::TOOL_COUNT, 1) == 1)
-                        filament.setScript(FILAMENT_STARTUP_SINGLE);
+                        filament->setScript(FILAMENT_STARTUP_SINGLE);
 					else
-                        filament.setScript(FILAMENT_STARTUP_DUAL);
-					interface::pushScreen(&filament);
+                        filament->setScript(FILAMENT_STARTUP_DUAL);
+					interface::pushScreen(filament);
                     break;
                 case WELCOME_PRINT_FROM_SD:
                      Motherboard::getBoard().interfaceBlink(0,0);
                     welcomeState++;
-                    interface::pushScreen(&sdmenu);
+                    interface::pushScreen(&Motherboard::getBoard().mainMenu.sdMenu);
                     break;
                 default:
                     needsRedraw = true;
@@ -412,7 +428,8 @@ void WelcomeScreen::notifyButtonPressed(ButtonArray::ButtonName button) {
         case ButtonArray::DOWN:
         case ButtonArray::UP:
 			break;
-
+	default:
+		break;
 	}
 }
 
@@ -484,14 +501,15 @@ void NozzleCalibrationScreen::notifyButtonPressed(ButtonArray::ButtonName button
             }
 			break;
         case ButtonArray::LEFT:
-			interface::pushScreen(&cancelBuildMenu);
+			interface::pushScreen(&Motherboard::getBoard().mainMenu.utils.monitorMode.cancelBuildMenu);
 			break;
 			
         case ButtonArray::RIGHT:
         case ButtonArray::DOWN:
         case ButtonArray::UP:
 			break;
-
+	default:
+		break;
 	}
 }
 
@@ -501,8 +519,8 @@ void NozzleCalibrationScreen::reset() {
     alignmentState=ALIGNMENT_START;
 }
 
-SelectAlignmentMenu::SelectAlignmentMenu() {
-	itemCount = 4;
+SelectAlignmentMenu::SelectAlignmentMenu(uint8_t optionsMask) :
+	CounterMenu(optionsMask, (uint8_t)4) {
     reset();
 }
 
@@ -517,7 +535,6 @@ void SelectAlignmentMenu::resetState(){
 void SelectAlignmentMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
 	
     
-    int32_t offset;
 	switch (index) {
 		case 0:
 			lcd.writeFromPgmspace(SELECT_MSG);
@@ -587,13 +604,13 @@ void SelectAlignmentMenu::handleSelect(uint8_t index) {
 		case 1:
 			// update toolhead offset (tool tolerance setting) 
 			// this is summed with previous offset setting
-			offset = (int32_t)(eeprom::getEeprom32(eeprom_offsets::TOOLHEAD_OFFSET_SETTINGS, 0)) + (int32_t)((xCounter-7)*XSTEPS_PER_MM *0.1f * 10);
+			offset = (int32_t)(eeprom::getEeprom32(eeprom_offsets::TOOLHEAD_OFFSET_SETTINGS, 0)) + (int32_t)((xCounter-7)*stepperAxisStepsPerMM(X_AXIS) *0.1f * 10);
             eeprom_write_block((uint8_t*)&offset, (uint8_t*)eeprom_offsets::TOOLHEAD_OFFSET_SETTINGS, 4);
             lineUpdate = 1;
 			break;
 		case 2:
 			// update toolhead offset (tool tolerance setting)
-			offset = (int32_t)(eeprom::getEeprom32(eeprom_offsets::TOOLHEAD_OFFSET_SETTINGS + 4, 0)) + (int32_t)((yCounter-7)*YSTEPS_PER_MM *0.1f * 10);
+			offset = (int32_t)(eeprom::getEeprom32(eeprom_offsets::TOOLHEAD_OFFSET_SETTINGS + 4, 0)) + (int32_t)((yCounter-7)*stepperAxisStepsPerMM(Y_AXIS) *0.1f * 10);
 			eeprom_write_block((uint8_t*)&offset, (uint8_t*)eeprom_offsets::TOOLHEAD_OFFSET_SETTINGS + 4, 4);
 			lineUpdate = 1;
 			break;
@@ -604,26 +621,50 @@ void SelectAlignmentMenu::handleSelect(uint8_t index) {
 }
 
 void FilamentScreen::startMotor(){
+    Piezo::playTune(TUNE_FILAMENT_START);
+
+    //So we don't prime after a pause
+    command::pauseUnRetractClear();
+
     int32_t interval = 300000000;  // 5 minutes
     int32_t steps = interval / 6250;
     if(forward)
         steps *= -1;
     Point target = Point(0,0,0,0,0);
-    target[axisID] = steps;
-    
-    planner::abort();
-    planner::setAccelerationOn(false);
-    planner::addMoveToBufferRelative(target, interval, 0x1f);
+    target[axisID] += steps;
+
+    //Backup the digi pot entry and switch the pot to high
+    //This is because we might be changing filament when we paused during
+    //the heating phase when the pots were turned low
+    digiPotOnEntry = steppers::getAxisPotValue(axisID);
+    steppers::resetAxisPot(axisID);
+
+    steppers::deprimeEnable(false);
+    //All axis are relative
+
+    //Backup the currently enabled axis, we need to return
+    //to this state when we're done with loading/unloading filament
+    restoreAxesEnabled = steppers::allAxesEnabled();
+
+    steppers::setTargetNew(target, interval, 0x1f);
     filamentTimer.clear();
     filamentTimer.start(300000000); //5 minutes
 }
-void FilamentScreen::stopMotor(){
-    
-    planner::abort();
-    for(int i = 0; i < STEPPER_COUNT; i++)
-        steppers::enableAxis(i, false);
 
+void FilamentScreen::stopMotor(){
+    steppers::abort(); 
+    steppers::deprimeEnable(true);
+
+    //Restore the enabled axis
+    for(int i = 0; i < STEPPER_COUNT; i++)
+        steppers::enableAxis(i, restoreAxesEnabled & _BV(i));
+
+    //Restore the digi pot setting from entry
+    steppers::setAxisPotValue(axisID, digiPotOnEntry);
 }
+
+//Renamed to zabs because of conflict with stdlib.h abs
+#define zabs(X) ((X) < 0 ? -(X) : (X)) 
 
 void FilamentScreen::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
     
@@ -642,7 +683,7 @@ void FilamentScreen::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
 					Motherboard::getBoard().getExtruderBoard(0).getExtruderHeater().set_target_temperature(0);
 					Motherboard::getBoard().getExtruderBoard(1).getExtruderHeater().set_target_temperature(0);
 					interface::popScreen();
-					Motherboard::getBoard().errorResponse("My temperature was  changed externally. Reselect filament   menu to try again.");
+					Motherboard::getBoard().errorResponse(EXTEMP_CHANGE_MSG);
 					return;
 			}
 			
@@ -671,11 +712,11 @@ void FilamentScreen::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
 					Motherboard::getBoard().getExtruderBoard(0).getExtruderHeater().set_target_temperature(0);
 					Motherboard::getBoard().getExtruderBoard(1).getExtruderHeater().set_target_temperature(0);
 					interface::popScreen();
-					Motherboard::getBoard().errorResponse("My temperature was  changed externally. Reselect filament   menu to try again.");
+					Motherboard::getBoard().errorResponse(EXTEMP_CHANGE_MSG);
 					return;
 			}
 				
-			uint8_t heatIndex = (abs((setTemp - currentTemp)) * 20) / setTemp;
+			uint8_t heatIndex = (zabs((setTemp - currentTemp)) * 20) / setTemp;
 			
 			int32_t mult = 255;
 			if(heatLights){
@@ -772,11 +813,11 @@ void FilamentScreen::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
 				lcd.writeFromPgmspace(EXPLAIN_FOUR_MSG);			
 				//_delay_us(1000000);
 				// if z stage is at zero, move z stage down
-				target = planner::getPosition();
+				target = steppers::getPlannerPosition();
 				if(target[2] < 1000){
 					target[2] = 60000;
 					interval = 5000000;
-					planner::addMoveToBufferRelative(target, interval, 0x1f);
+					steppers::setTargetNew(target, interval, 0x1f);
 				}
 				_delay_us(1000000);
 				Motherboard::getBoard().interfaceBlink(25,15);
@@ -953,13 +994,14 @@ void FilamentScreen::notifyButtonPressed(ButtonArray::ButtonName button) {
             }
 			break;
         case ButtonArray::LEFT:
-			interface::pushScreen(&cancelBuildMenu);			
+			interface::pushScreen(&Motherboard::getBoard().mainMenu.utils.monitorMode.cancelBuildMenu);			
             break;			
         case ButtonArray::RIGHT:
         case ButtonArray::DOWN:
         case ButtonArray::UP:
 			break;
-            
+        default:
+                break;
 	}
 }
 
@@ -972,8 +1014,8 @@ void FilamentScreen::reset() {
     filamentTimer = Timeout();
 }
 
-ReadyMenu::ReadyMenu() {
-	itemCount = 4;
+ReadyMenu::ReadyMenu(uint8_t optionsMask) :
+	Menu(optionsMask, (uint8_t)4) {
 	reset();
 }
 
@@ -1014,8 +1056,8 @@ void ReadyMenu::handleSelect(uint8_t index) {
 	}
 }
 
-LevelOKMenu::LevelOKMenu() {
-	itemCount = 4;
+LevelOKMenu::LevelOKMenu(uint8_t optionsMask) :
+	Menu(optionsMask | IS_STICKY_MASK, (uint8_t)4) {
 	reset();
 }
 
@@ -1060,8 +1102,8 @@ void LevelOKMenu::handleSelect(uint8_t index) {
 	}
 }
 
-FilamentOKMenu::FilamentOKMenu() {
-	itemCount = 4;
+FilamentOKMenu::FilamentOKMenu(uint8_t optionsMask) :
+	Menu(optionsMask, (uint8_t)4) {
 	reset();
 }
 
@@ -1104,10 +1146,16 @@ void FilamentOKMenu::handleSelect(uint8_t index) {
 	}
 }
 
-FilamentMenu::FilamentMenu() {
-	itemCount = 4;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winline"
+
+FilamentMenu::FilamentMenu(uint8_t optionsMask) :
+	Menu(optionsMask, (uint8_t)4),
+	filament((uint8_t)0) {
 	reset();
 }
+
+#pragma GCC diagnostic pop
 
 void FilamentMenu::resetState() {
     singleTool = eeprom::isSingleTool();
@@ -1201,6 +1249,19 @@ void MessageScreen::addMessage(CircularBuffer& buf) {
 }
 
 
+void MessageScreen::addMessage(const prog_uchar msg[]) {
+
+	cursor += strlcpy_P(message + cursor, (const prog_char *)msg, BUF_SIZE - cursor);
+		
+	// ensure that message is always null-terminated
+	if (cursor == BUF_SIZE) {
+		message[BUF_SIZE-1] = '\0';
+	} else {
+		message[cursor] = '\0';
+	}
+}
+
+#if 0
 void MessageScreen::addMessage(char msg[]) {
 
 	char* letter = msg;
@@ -1216,6 +1277,8 @@ void MessageScreen::addMessage(char msg[]) {
 		message[cursor] = '\0';
 	}
 }
+
+#endif
 
 void MessageScreen::clearMessage() {
 	x = y = 0;
@@ -1257,9 +1320,12 @@ void MessageScreen::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
 
 void MessageScreen::reset() {
 	timeout = Timeout();
+	buttonsDisabled = false;
 }
 
 void MessageScreen::notifyButtonPressed(ButtonArray::ButtonName button) {
+	if ( buttonsDisabled )	return;
+
     host::HostState state;
 	switch (button) {
 		case ButtonArray::CENTER:
@@ -1269,27 +1335,33 @@ void MessageScreen::notifyButtonPressed(ButtonArray::ButtonName button) {
             if((state == host::HOST_STATE_BUILDING_ONBOARD) ||
                     (state == host::HOST_STATE_BUILDING) ||
                 (state == host::HOST_STATE_BUILDING_FROM_SD)){
-                    interface::pushScreen(&cancelBuildMenu);
+                    interface::pushScreen(&Motherboard::getBoard().mainMenu.utils.monitorMode.cancelBuildMenu);
                 }
         case ButtonArray::RIGHT:
         case ButtonArray::DOWN:
         case ButtonArray::UP:
 			break;
-
+        default:
+                break;
 	}
 }
 
 void JogMode::reset() {
-	jogDistance = DISTANCE_LONG;
+	jogDistance = DISTANCE_CONT;
+	jogging = false;
 	distanceChanged = modeChanged = false;
 	JogModeScreen = JOG_MODE_X;
 }
 
 
 void JogMode::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
-	
-	
-
+	//Stop all movement when a button is released
+	if ((jogging) && (!interface::isButtonPressed(ButtonArray::DOWN)) &&
+	    (!interface::isButtonPressed(ButtonArray::UP)))
+	{
+		jogging = false;
+		steppers::abort();
+	}
 
 	if (forceRedraw || distanceChanged || modeChanged) {
 		lcd.clear();
@@ -1335,18 +1407,21 @@ void JogMode::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
 }
 
 void JogMode::jog(ButtonArray::ButtonName direction) {
-	planner::abort();
-	Point position = planner::getPosition();	
+	steppers::abort();
+	Point position = steppers::getStepperPosition();	
 
-	int32_t interval = 1000;
-	int32_t steps;
+	int32_t interval = 500;
+	int32_t steps = 20;
 
 	switch(jogDistance) {
 	case DISTANCE_SHORT:
 		steps = 20;
 		break;
 	case DISTANCE_LONG:
-		steps = 1000;
+		steps = 3000;
+		break;
+	case DISTANCE_CONT:	//Continuous movement, no clunks
+		steps = (INT32_MAX - 1) >> 1;
 		break;
 	}
 
@@ -1363,6 +1438,8 @@ void JogMode::jog(ButtonArray::ButtonName direction) {
 			case ButtonArray::UP:
 			position[0] += steps;
 			break;
+		        default:
+               			 break;
 		}
 	}
 	else if (JogModeScreen == JOG_MODE_Y)
@@ -1382,6 +1459,8 @@ void JogMode::jog(ButtonArray::ButtonName direction) {
 			case ButtonArray::UP:
 			position[1] += steps;
 			break;
+		        default:
+               			break;
 		}
 			
 	}
@@ -1398,10 +1477,13 @@ void JogMode::jog(ButtonArray::ButtonName direction) {
 			case ButtonArray::UP:
 			position[2] -= steps;
 			break;
+        		default:
+                		break;
 		}
 	}
-
-	planner::addMoveToBuffer(position, interval);
+	
+	if ( direction == ButtonArray::UP || direction == ButtonArray::DOWN )
+		steppers::setTarget(position, interval);
 }
 
 void JogMode::notifyButtonPressed(ButtonArray::ButtonName button) {
@@ -1411,15 +1493,88 @@ void JogMode::notifyButtonPressed(ButtonArray::ButtonName button) {
            for(int i = 0; i < STEPPER_COUNT; i++)
 			steppers::enableAxis(i, false);
 		break;
-        case ButtonArray::LEFT:
-        case ButtonArray::RIGHT:
         case ButtonArray::DOWN:
         case ButtonArray::UP:
+		jogging = true;
+        case ButtonArray::LEFT:
+        case ButtonArray::RIGHT:
 		jog(button);
 		break;
+        default:
+                break;
 	}
 }
 
+void FilamentOdometerScreen::reset() {
+	needsRedraw = false;
+}
+
+
+// Print the filament used, right justified.  Written in C to save space as it's
+// used 3 times.  Takes filamentUsed in millimeters
+
+void printFilamentUsed(float filamentUsed, uint8_t yOffset, LiquidCrystalSerial& lcd) {
+	uint8_t precision;
+
+	filamentUsed /= 1000.0; //convert to meters
+	if      ( filamentUsed < 0.1 )  {
+		filamentUsed *= 1000.0;        //Back to mm's
+		precision = 1;
+	}
+	else if ( filamentUsed < 10.0 )  precision = 4;
+	else if ( filamentUsed < 100.0 ) precision = 3;
+	else                             precision = 2;
+
+	lcd.setCursor(0, yOffset);
+	lcd.writeFloat(filamentUsed, precision, LCD_SCREEN_WIDTH - ((precision == 1) ? 2 : 1));
+	lcd.writeFromPgmspace((precision == 1) ? MILLIMETERS_MSG : METERS_MSG);
+}
+
+void FilamentOdometerScreen::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
+	if (forceRedraw || needsRedraw) {
+		lcd.clear();
+		lcd.setCursor(0,0);
+		lcd.writeFromPgmspace(FILAMENT_ODOMETER_MSG);
+		lcd.setCursor(0,1);
+		lcd.writeFromPgmspace(FILAMENT_LIFETIME_MSG);
+		lcd.setCursor(0,2);
+		lcd.writeFromPgmspace(FILAMENT_TRIP_MSG);
+		lcd.setCursor(0,3);
+		lcd.writeFromPgmspace(FILAMENT_RESET_TRIP_MSG);
+
+		// Get lifetime filament used for A & B axis and sum them into filamentUsed
+		float filamentUsedA, filamentUsedB;
+                filamentUsedA = stepperAxisStepsToMM(eeprom::getEepromInt64(eeprom_offsets::FILAMENT_LIFETIME, 0),                  A_AXIS);
+		filamentUsedB = stepperAxisStepsToMM(eeprom::getEepromInt64(eeprom_offsets::FILAMENT_LIFETIME + sizeof(int64_t),0), B_AXIS);
+		printFilamentUsed(filamentUsedA + filamentUsedB, 1, lcd);
+
+		// Get trip filament used for A & B axis and sum them into filamentUsed
+                filamentUsedA -= stepperAxisStepsToMM(eeprom::getEepromInt64(eeprom_offsets::FILAMENT_TRIP, 0),                  A_AXIS);
+		filamentUsedB -= stepperAxisStepsToMM(eeprom::getEepromInt64(eeprom_offsets::FILAMENT_TRIP + sizeof(int64_t),0), B_AXIS);
+		printFilamentUsed(filamentUsedA + filamentUsedB, 2, lcd);
+
+		needsRedraw = false;
+	}
+}
+
+void FilamentOdometerScreen::notifyButtonPressed(ButtonArray::ButtonName button) {
+	switch (button) {
+	case ButtonArray::CENTER:
+		eeprom::setEepromInt64(eeprom_offsets::FILAMENT_TRIP, eeprom::getEepromInt64(eeprom_offsets::FILAMENT_LIFETIME, 0));
+		eeprom::setEepromInt64(eeprom_offsets::FILAMENT_TRIP + sizeof(int64_t), eeprom::getEepromInt64(eeprom_offsets::FILAMENT_LIFETIME + sizeof(int64_t), 0));
+		needsRedraw = true;
+		break;
+        case ButtonArray::DOWN:
+        case ButtonArray::UP:
+        case ButtonArray::RIGHT:
+		break;
+        case ButtonArray::LEFT:
+        	interface::popScreen();
+		break;
+        default:
+                break;
+	}
+}
 
 void SnakeMode::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
 
@@ -1539,13 +1694,14 @@ void SnakeMode::notifyButtonPressed(ButtonArray::ButtonName button) {
         case ButtonArray::CENTER:
                 interface::popScreen();
 		break;
+        default:
+                break;
 	}
 }
 
 
 void MonitorMode::reset() {
 	updatePhase = 0;
-	buildPercentage = 101;
 	singleTool = eeprom::isSingleTool();
     toggleBlink = false;
     heating = false;
@@ -1553,12 +1709,6 @@ void MonitorMode::reset() {
     LEDClear = true;
 	
 }
-void MonitorMode::setBuildPercentage(uint8_t percent){
-	
-	buildPercentage = percent;
-}
-
-#define abs(X) ((X) < 0 ? -(X) : (X)) 
 
 void MonitorMode::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
     
@@ -1611,6 +1761,8 @@ void MonitorMode::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
             case host::HOST_STATE_ERROR:
                 lcd.writeFromPgmspace(ERROR_MSG);
                 break;
+	    default:
+		break;
             }
         }
 
@@ -1675,6 +1827,9 @@ void MonitorMode::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
                     lcd.setCursor(16,0);
                     lcd.writeFromPgmspace(BUILD_PERCENT_MSG);
                     break;
+	        default:
+          	    break;
+
             }
             RGB_LED::setDefaultColor();
             LEDClear = true;
@@ -1683,7 +1838,7 @@ void MonitorMode::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
             
             if(setTemp > 0){
 				int32_t mult = 255;
-				heatIndex = (abs((setTemp - currentTemp)) * 12) / setTemp;
+				heatIndex = (zabs((setTemp - currentTemp)) * 12) / setTemp;
 				if(heatLights){
 					RGB_LED::setColor((mult*(setTemp - currentTemp))/setTemp, 0, (mult*currentTemp)/setTemp, LEDClear);
 					LEDClear = false;
@@ -1691,12 +1846,12 @@ void MonitorMode::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
 			}
 			if (lastHeatIndex > heatIndex){
 				lcd.setCursor(8,0);
-				lcd.writeString("            ");
+				lcd.writeString((char *)"            ");
 				lastHeatIndex = 0;
 			}
             
             lcd.setCursor(8+ lastHeatIndex,0);
-            for (int i = lastHeatIndex; i < heatIndex; i++)
+            for (uint16_t i = lastHeatIndex; i < heatIndex; i++)
                 lcd.write(0xFF);
             lastHeatIndex = heatIndex;
             
@@ -1805,13 +1960,24 @@ void MonitorMode::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
 		state = host::getHostState();
 		if(!heating && ((state == host::HOST_STATE_BUILDING) || (state == host::HOST_STATE_BUILDING_FROM_SD)))
 		{
+
+			uint8_t buildPercentage = command::getBuildPercentage();
+
 			if(buildPercentage < 100)
 			{
+				if ( command::getPauseAtZPos() != 0 ) {
+					lcd.setCursor(16,0);
+					lcd.write('*');
+				}
 				lcd.setCursor(17,0);
 				lcd.writeInt(buildPercentage,2);
 			}
 			else if(buildPercentage == 100)
 			{
+				if ( command::getPauseAtZPos() != 0 ) {
+					lcd.setCursor(15,0);
+					lcd.write('*');
+				}
 				lcd.setCursor(16,0);
 				lcd.writeFromPgmspace(DONE_MSG);
 			}
@@ -1823,6 +1989,18 @@ void MonitorMode::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
 	if (updatePhase > 6) {
 		updatePhase = 0;
 	}
+
+#ifdef DEBUG_ONSCREEN
+	lcd.setCursor(0, 0);
+	lcd.writeString((char *)"DOS1: ");
+	lcd.writeFloat(debug_onscreen1, 3, 0);
+	lcd.writeString((char *)" ");
+
+	lcd.setCursor(0, 1);
+	lcd.writeString((char *)"DOS2: ");
+	lcd.writeFloat(debug_onscreen2, 3, 0);
+	lcd.writeString((char *)" ");
+#endif
 }
 
 void MonitorMode::notifyButtonPressed(ButtonArray::ButtonName button) {
@@ -1835,12 +2013,14 @@ void MonitorMode::notifyButtonPressed(ButtonArray::ButtonName button) {
 				interface::pushScreen(&active_build_menu);
 				break;
             case host::HOST_STATE_BUILDING_ONBOARD:
-                interface::pushScreen(&cancel_build_menu);
+                interface::pushScreen(&cancelBuildMenu);
                 break;
             default:
                 interface::popScreen();
                 break;
             }
+        default:
+                break;
 	}
 }
 
@@ -1919,9 +2099,13 @@ void Menu::notifyButtonPressed(ButtonArray::ButtonName button) {
         case ButtonArray::RIGHT:
 		break;
         case ButtonArray::UP:
-        // increment index
-        if (itemIndex > firstItemIndex) {
+        	// increment index
+        	if (itemIndex > firstItemIndex) {
 			itemIndex--;
+		}
+		//Wrap around to bottom of menu
+		else {
+			itemIndex = itemCount - 1;
 		}
 		break;
         case ButtonArray::DOWN:
@@ -1929,7 +2113,13 @@ void Menu::notifyButtonPressed(ButtonArray::ButtonName button) {
 		if (itemIndex < itemCount - 1) {
 			itemIndex++;
 		}
+		//Wrap around to top of menu
+		else {
+			itemIndex = firstItemIndex;
+		}
 		break;
+        default:
+                break;
 	}
 }
 
@@ -1971,7 +2161,8 @@ void CounterMenu::notifyButtonPressed(ButtonArray::ButtonName button) {
             else{
                 if (itemIndex > firstItemIndex) {
                     itemIndex--;
-                }}
+                } else itemIndex = itemCount - 1;
+		}
             break;
         case ButtonArray::DOWN:
             if(selectMode){
@@ -1982,13 +2173,16 @@ void CounterMenu::notifyButtonPressed(ButtonArray::ButtonName button) {
             else{    
                 if (itemIndex < itemCount - 1) {
                     itemIndex++;
-                }}
+                } else itemIndex = 0;
+		}
             break;
+        default:
+                break;
 	}
 }
 
-PreheatSettingsMenu::PreheatSettingsMenu() {
-	itemCount = 4;
+PreheatSettingsMenu::PreheatSettingsMenu(uint8_t optionsMask) :
+	CounterMenu(optionsMask, (uint8_t)4) {
 	reset();
 }   
 void PreheatSettingsMenu::resetState(){
@@ -2112,8 +2306,8 @@ void PreheatSettingsMenu::handleSelect(uint8_t index) {
 }
 
 
-ResetSettingsMenu::ResetSettingsMenu() {
-	itemCount = 4;
+ResetSettingsMenu::ResetSettingsMenu(uint8_t optionsMask) :
+	Menu(optionsMask, (uint8_t)4) {
 	reset();
 }
 
@@ -2155,16 +2349,541 @@ void ResetSettingsMenu::handleSelect(uint8_t index) {
 	}
 }
 
+void writeProfileToEeprom(uint8_t pIndex, uint8_t *pName, uint32_t *homeOffsets,
+                          uint16_t hbpTemp, uint16_t rightTemp, uint16_t leftTemp) {
+        uint16_t offset = eeprom_offsets::PROFILES_BASE + (uint16_t)(pIndex * PROFILE_SIZE);
 
-ActiveBuildMenu::ActiveBuildMenu(){
-	itemCount = 4;
+        cli();
+
+        //Write profile name
+        if ( pName )    eeprom_write_block(pName,(uint8_t*)(offset + profile_offsets::PROFILE_NAME), PROFILE_NAME_SIZE);
+
+        //Write home axis
+        eeprom_write_block((void *)homeOffsets,(void *)(offset + profile_offsets::PROFILE_HOME_POSITIONS_STEPS), PROFILES_HOME_POSITIONS_STORED * sizeof(uint32_t));
+
+        //Write temps
+        eeprom_write_word((uint16_t*)(offset + profile_offsets::PROFILE_PREHEAT_RIGHT_TEMP), rightTemp);
+        eeprom_write_word((uint16_t*)(offset + profile_offsets::PROFILE_PREHEAT_LEFT_TEMP), leftTemp);
+        eeprom_write_word((uint16_t*)(offset + profile_offsets::PROFILE_PREHEAT_PLATFORM_TEMP), hbpTemp);
+
+        sei();
+}
+
+void readProfileFromEeprom(uint8_t pIndex, uint8_t *pName, uint32_t *homeOffsets,
+			   uint16_t *hbpTemp, uint16_t *rightTemp, uint16_t *leftTemp) {
+        uint16_t offset = eeprom_offsets::PROFILES_BASE + (uint16_t)(pIndex * PROFILE_SIZE);
+
+        cli();
+
+        //Read profile name
+        if ( pName )    eeprom_read_block(pName,(uint8_t*)offset, PROFILE_NAME_SIZE);
+
+        //Read home axis
+        eeprom_read_block((void *)homeOffsets,(void *)(offset + profile_offsets::PROFILE_HOME_POSITIONS_STEPS), PROFILES_HOME_POSITIONS_STORED * sizeof(uint32_t));
+
+        //Read temps
+        *rightTemp      = eeprom_read_word((uint16_t*)(offset + profile_offsets::PROFILE_PREHEAT_RIGHT_TEMP));
+        *leftTemp       = eeprom_read_word((uint16_t*)(offset + profile_offsets::PROFILE_PREHEAT_LEFT_TEMP));
+        *hbpTemp        = eeprom_read_word((uint16_t*)(offset + profile_offsets::PROFILE_PREHEAT_PLATFORM_TEMP));
+
+        sei();
+}
+
+//buf should have length PROFILE_NAME_SIZE + 1
+void getProfileName(uint8_t pIndex, uint8_t *buf) {
+        uint16_t offset = eeprom_offsets::PROFILES_BASE + (uint16_t)(pIndex * PROFILE_SIZE);
+
+        cli();
+        eeprom_read_block(buf,(void *)offset,PROFILE_NAME_SIZE);
+        sei();
+
+	//Fill out the name with white space
+	bool addWhiteSpace = false;
+	for (uint8_t i = 0; i < PROFILE_NAME_SIZE; i ++ ) {
+		if ( buf[i] == '\0' ) addWhiteSpace = true;
+		if ( addWhiteSpace )	buf[i] = ' ';
+	}
+        buf[PROFILE_NAME_SIZE] = '\0';
+}
+
+#define PROFILE_NAME_CHAR_LOWER_LIMIT 32
+#define PROFILE_NAME_CHAR_UPPER_LIMIT 126
+
+ProfilesMenu::ProfilesMenu(uint8_t optionsMask) :
+	Menu((uint8_t)0, (uint8_t)PROFILES_QUANTITY),
+	profileSubMenu((uint8_t)0) {
+        reset();
+
+        //Setup defaults if required
+       //Initialize a flag to tell us profiles have been initialized
+        if ( eeprom_read_byte((uint8_t*)eeprom_offsets::PROFILES_INIT) != PROFILES_INITIALIZED )
+		eeprom::setDefaultsProfiles(eeprom_offsets::PROFILES_BASE);
+}
+
+void ProfilesMenu::resetState() {
+        firstItemIndex = 0;
+        itemIndex = 0;
+}
+
+void ProfilesMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
+        uint8_t buf[PROFILE_NAME_SIZE + 1];
+
+        getProfileName(index, buf);
+
+        lcd.writeString((char *)buf);
+}
+
+void ProfilesMenu::handleSelect(uint8_t index) {
+        profileSubMenu.profileIndex = index;
+        interface::pushScreen(&profileSubMenu);
+}
+
+ProfileSubMenu::ProfileSubMenu(uint8_t optionsMask) :
+	Menu(optionsMask, (uint8_t)4),
+	profileChangeNameMode((uint8_t)0),
+	profileDisplaySettingsMenu((uint8_t)0) {
+        reset();
+}
+
+void ProfileSubMenu::resetState() {
+        itemIndex = 0;
+        firstItemIndex = 0;
+}
+
+void ProfileSubMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
+        switch (index) {
+        case 0:
+                lcd.writeFromPgmspace(PROFILE_RESTORE_MSG);
+                break;
+        case 1:
+                lcd.writeFromPgmspace(PROFILE_DISPLAY_CONFIG_MSG);
+                break;
+        case 2:
+                lcd.writeFromPgmspace(PROFILE_CHANGE_NAME_MSG);
+                break;
+        case 3:
+                lcd.writeFromPgmspace(PROFILE_SAVE_TO_PROFILE_MSG);
+                break;
+        }
+}
+
+void ProfileSubMenu::handleSelect(uint8_t index) {
+        uint16_t hbpTemp, rightTemp, leftTemp;
+
+        switch (index) {
+                case 0:
+                        //Restore
+                        //Read settings from eeprom
+                        readProfileFromEeprom(profileIndex, NULL, homePosition, &hbpTemp, &rightTemp, &leftTemp);
+
+                        //Write out the home offsets
+			cli();
+			eeprom_write_block(homePosition, (void*)eeprom_offsets::AXIS_HOME_POSITIONS_STEPS, sizeof(uint32_t) * PROFILES_HOME_POSITIONS_STORED);
+                        eeprom_write_word((uint16_t *)(eeprom_offsets::PREHEAT_SETTINGS + preheat_eeprom_offsets::PREHEAT_RIGHT_OFFSET),    rightTemp);
+                        eeprom_write_word((uint16_t *)(eeprom_offsets::PREHEAT_SETTINGS + preheat_eeprom_offsets::PREHEAT_LEFT_OFFSET),     leftTemp);
+                        eeprom_write_word((uint16_t *)(eeprom_offsets::PREHEAT_SETTINGS + preheat_eeprom_offsets::PREHEAT_PLATFORM_OFFSET), hbpTemp);
+                        sei();
+
+                        interface::popScreen();
+                        interface::popScreen();
+
+                        //Reset
+                        host::stopBuildNow();
+                        break;
+                case 1:
+                        //Display settings
+                        profileDisplaySettingsMenu.profileIndex = profileIndex;
+                        interface::pushScreen(&profileDisplaySettingsMenu);
+                        break;
+                case 2:
+                        //Change Profile Name
+                        profileChangeNameMode.profileIndex = profileIndex;
+                        interface::pushScreen(&profileChangeNameMode);
+                        break;
+                case 3: //Save To Profile
+                        //Get the home axis positions
+                        cli();
+        		eeprom_read_block((void *)homePosition,(void *)eeprom_offsets::AXIS_HOME_POSITIONS_STEPS, PROFILES_HOME_POSITIONS_STORED * sizeof(uint32_t));
+                        rightTemp = eeprom_read_word((uint16_t *)(eeprom_offsets::PREHEAT_SETTINGS + preheat_eeprom_offsets::PREHEAT_RIGHT_OFFSET));
+                        leftTemp  = eeprom_read_word((uint16_t *)(eeprom_offsets::PREHEAT_SETTINGS + preheat_eeprom_offsets::PREHEAT_LEFT_OFFSET));
+                        hbpTemp   = eeprom_read_word((uint16_t *)(eeprom_offsets::PREHEAT_SETTINGS + preheat_eeprom_offsets::PREHEAT_PLATFORM_OFFSET));
+			sei();
+
+                        writeProfileToEeprom(profileIndex, NULL, homePosition, hbpTemp, rightTemp, leftTemp);
+
+                        interface::popScreen();
+                        break;
+        }
+}
+
+void ProfileChangeNameMode::reset() {
+        cursorLocation = 0;
+        getProfileName(profileIndex, profileName);
+}
+
+void ProfileChangeNameMode::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
+        if (forceRedraw) {
+                lcd.clear();
+
+                lcd.setCursor(0,0);
+                lcd.writeFromPgmspace(PROFILE_PROFILE_NAME_MSG);
+
+                lcd.setCursor(0,3);
+                lcd.writeFromPgmspace(UPDNLRM_MSG);
+        }
+
+        lcd.setCursor(0,1);
+        lcd.writeString((char *)profileName);
+
+        //Draw the cursor
+        lcd.setCursor(cursorLocation,2);
+        lcd.write('^');
+
+        //Write a blank before and after the cursor if we're not at the ends
+        if ( cursorLocation >= 1 ) {
+                lcd.setCursor(cursorLocation-1, 2);
+                lcd.writeFromPgmspace(BLANK_CHAR_MSG);
+        }
+        if ( cursorLocation < PROFILE_NAME_SIZE ) {
+                lcd.setCursor(cursorLocation+1, 2);
+                lcd.writeFromPgmspace(BLANK_CHAR_MSG);
+        }
+}
+
+void ProfileChangeNameMode::notifyButtonPressed(ButtonArray::ButtonName button) {
+        uint16_t offset;
+
+        switch (button) {
+                case ButtonArray::CENTER:
+                        //Write the profile name
+                        offset = eeprom_offsets::PROFILES_BASE + (uint16_t)(profileIndex * PROFILE_SIZE);
+
+                        cli();
+                        eeprom_write_block(profileName,(uint8_t*)offset, PROFILE_NAME_SIZE);
+                        sei();
+
+                        interface::popScreen();
+                        break;
+                case ButtonArray::LEFT:
+                        if ( cursorLocation > 0 )        cursorLocation --;
+			else				 interface::popScreen();
+                        break;
+                case ButtonArray::RIGHT:
+                        if ( cursorLocation < (PROFILE_NAME_SIZE-1) ) cursorLocation ++;
+                        break;
+                case ButtonArray::UP:
+                        profileName[cursorLocation] += 1;
+			break;
+                case ButtonArray::DOWN:
+                        profileName[cursorLocation] -= 1;
+                        break;
+	        default:
+			break;
+        }
+
+        //Hard limits
+        if ( profileName[cursorLocation] < PROFILE_NAME_CHAR_LOWER_LIMIT )      profileName[cursorLocation] = PROFILE_NAME_CHAR_LOWER_LIMIT;
+        if ( profileName[cursorLocation] > PROFILE_NAME_CHAR_UPPER_LIMIT )      profileName[cursorLocation] = PROFILE_NAME_CHAR_UPPER_LIMIT;
+}
+
+ProfileDisplaySettingsMenu::ProfileDisplaySettingsMenu(uint8_t optionsMask):
+	Menu(optionsMask, (uint8_t)8) {
+        reset();
+}
+
+void ProfileDisplaySettingsMenu::resetState() {
+        readProfileFromEeprom(profileIndex, profileName, home, &hbpTemp, &rightTemp, &leftTemp);
+        itemIndex = 2;
+        firstItemIndex = 2;
+}
+
+void ProfileDisplaySettingsMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
+        switch (index) {
+        case 0:
+                lcd.writeString((char *)profileName);
+                break;
+        case 2:
+                lcd.writeFromPgmspace(XOFFSET_MSG);
+                lcd.writeFloat(stepperAxisStepsToMM(home[X_AXIS], X_AXIS), 3, LCD_SCREEN_WIDTH - 2);
+		lcd.writeFromPgmspace(MILLIMETERS_MSG);
+                break;
+        case 3:
+                lcd.writeFromPgmspace(YOFFSET_MSG);
+                lcd.writeFloat(stepperAxisStepsToMM(home[Y_AXIS], Y_AXIS), 3, LCD_SCREEN_WIDTH - 2);
+		lcd.writeFromPgmspace(MILLIMETERS_MSG);
+                break;
+        case 4:
+                lcd.writeFromPgmspace(ZOFFSET_MSG);
+                lcd.writeFloat(stepperAxisStepsToMM(home[Z_AXIS], Z_AXIS), 3, LCD_SCREEN_WIDTH - 2);
+		lcd.writeFromPgmspace(MILLIMETERS_MSG);
+                break;
+        case 5:
+                lcd.writeFromPgmspace(PROFILE_RIGHT_MSG);
+                lcd.writeFloat((float)rightTemp, 0, LCD_SCREEN_WIDTH);
+                break;
+        case 6:
+                lcd.writeFromPgmspace(PROFILE_LEFT_MSG);
+                lcd.writeFloat((float)leftTemp, 0, LCD_SCREEN_WIDTH);
+                break;
+        case 7:
+                lcd.writeFromPgmspace(PROFILE_PLATFORM_MSG);
+                lcd.writeFloat((float)hbpTemp, 0, LCD_SCREEN_WIDTH);
+                break;
+        }
+}
+
+void ProfileDisplaySettingsMenu::handleSelect(uint8_t index) {
+}
+
+#ifdef EEPROM_MENU_ENABLE
+
+EepromMenu::EepromMenu(uint8_t optionsMask) :
+	Menu(optionsMask, (uint8_t)3) {
+	reset();
+}
+
+void EepromMenu::resetState() {
+        itemIndex = 0;
+        firstItemIndex = 0;
+	safetyGuard = 0;
+}
+
+void EepromMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
+        switch (index) {
+        case 0:
+                lcd.writeFromPgmspace(EEPROM_DUMP_MSG);
+                break;
+        case 1:
+                lcd.writeFromPgmspace(EEPROM_RESTORE_MSG);
+                break;
+        case 2:
+                lcd.writeFromPgmspace(EEPROM_ERASE_MSG);
+                break;
+        }
+}
+
+void EepromMenu::handleSelect(uint8_t index) {
+       // Note stack filename buffer used by saveToSDFile() and
+       // restoreFromSDFile() is 16 bytes -- just large enough
+       // for this name
+	const static PROGMEM prog_char dumpFilename[] = "eeprom_dump.bin";
+
+        switch (index) {
+                case 0:
+                        //Dump
+			safetyGuard = 0;
+			Piezo::setTone(NOTE_A4,100);
+			eeprom::saveToSDFile(dumpFilename);
+                        interface::popScreen();
+                        break;
+                case 1:
+			//Restore
+			safetyGuard ++;
+			if ( safetyGuard > 3 ) {
+				Piezo::setTone(NOTE_A4,100);
+				safetyGuard = 0;
+				eeprom::restoreFromSDFile(dumpFilename);
+                        	interface::popScreen();
+			}
+                        break;
+                case 2:
+                        //Erase
+			safetyGuard ++;
+			if ( safetyGuard > 3 ) {
+				safetyGuard = 0;
+				Piezo::setTone(NOTE_A4,100);
+				eeprom::erase();
+                        	interface::popScreen();
+			}
+                        break;
+        }
+}
+
+#endif
+
+void HomeOffsetsMode::reset() {
+	cli();
+	eeprom_read_block(homePosition, (void *)eeprom_offsets::AXIS_HOME_POSITIONS_STEPS, PROFILES_HOME_POSITIONS_STORED * sizeof(uint32_t));
+	sei();
+
+        lastHomeOffsetState = HOS_NONE;
+        homeOffsetState     = HOS_OFFSET_X;
+	valueChanged = false;
+}
+
+void HomeOffsetsMode::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
+        if ( homeOffsetState != lastHomeOffsetState )   forceRedraw = true;
+
+        if (forceRedraw) {
+                lcd.clear();
+
+                lcd.setCursor(0,0);
+                switch(homeOffsetState) {
+                        case HOS_OFFSET_X:
+                                lcd.writeFromPgmspace(XOFFSET_MSG);
+                                break;
+                        case HOS_OFFSET_Y:
+                                lcd.writeFromPgmspace(YOFFSET_MSG);
+                                break;
+                        case HOS_OFFSET_Z:
+                                lcd.writeFromPgmspace(ZOFFSET_MSG);
+                                break;
+			default:
+				break;
+                }
+
+                lcd.setCursor(0,3);
+                lcd.writeFromPgmspace(UPDNLM_MSG);
+        }
+
+        float position = 0.0;
+
+        switch(homeOffsetState) {
+                case HOS_OFFSET_X:
+                        position = stepperAxisStepsToMM(homePosition[0], X_AXIS);
+                        break;
+                case HOS_OFFSET_Y:
+                        position = stepperAxisStepsToMM(homePosition[1], Y_AXIS);
+                        break;
+                case HOS_OFFSET_Z:
+                        position = stepperAxisStepsToMM(homePosition[2], Z_AXIS);
+                        break;
+	        default:
+         	        break;
+        }
+
+        lcd.setCursor(0,1);
+	lcd.writeFloat((float)position, 3, 0);
+        lcd.writeFromPgmspace(MILLIMETERS_MSG);
+	lcd.writeFromPgmspace(BLANK_CHAR_MSG);
+
+        lastHomeOffsetState = homeOffsetState;
+}
+
+void HomeOffsetsMode::notifyButtonPressed(ButtonArray::ButtonName button) {
+        uint8_t currentIndex = homeOffsetState - HOS_OFFSET_X;
+
+        switch (button) {
+                case ButtonArray::LEFT:
+                        interface::popScreen();
+                        break;
+                case ButtonArray::CENTER:
+			if ( valueChanged ) {
+                        	cli();
+                        	eeprom_write_block((void *)&homePosition[currentIndex],
+						   (void*)(eeprom_offsets::AXIS_HOME_POSITIONS_STEPS + sizeof(uint32_t) * currentIndex) ,
+						   sizeof(uint32_t));
+                        	sei();
+			}
+
+                        if      ( homeOffsetState == HOS_OFFSET_X )     homeOffsetState = HOS_OFFSET_Y;
+                        else if ( homeOffsetState == HOS_OFFSET_Y )     homeOffsetState = HOS_OFFSET_Z;
+			else						interface::popScreen();
+			valueChanged = false;
+                        break;
+                case ButtonArray::UP:
+                        // increment less
+                        homePosition[currentIndex] += 1;
+			valueChanged = true;
+                        break;
+                case ButtonArray::DOWN:
+                        // decrement less
+                        homePosition[currentIndex] -= 1;
+			valueChanged = true;
+                        break;
+	        default:
+			break;
+        }
+}
+
+void PauseAtZPosScreen::reset() {
+	int32_t currentPause = command::getPauseAtZPos();
+
+	if ( currentPause == 0 ) {
+		Point position = steppers::getPlannerPosition();
+		pauseAtZPos = stepperAxisStepsToMM(position[2], Z_AXIS);
+		if ( pauseAtZPos < 0 )	pauseAtZPos = 0;
+	} else	pauseAtZPos = stepperAxisStepsToMM(currentPause, Z_AXIS);
+}
+
+void PauseAtZPosScreen::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
+	if (forceRedraw) {
+		lcd.clear();
+
+		lcd.setCursor(0,0);
+		lcd.writeFromPgmspace(PAUSE_AT_ZPOS_MSG);
+
+                lcd.setCursor(0,3);
+                lcd.writeFromPgmspace(UPDNLM_MSG);
+        }
+
+        lcd.setCursor(0,1);
+	lcd.writeFloat(pauseAtZPos, 2, 0);
+        lcd.writeFromPgmspace(MILLIMETERS_MSG);
+	lcd.writeFromPgmspace(BLANK_CHAR_4_MSG);
+}
+
+void PauseAtZPosScreen::notifyButtonPressed(ButtonArray::ButtonName button) {
+	uint16_t repetitions;
+
+        switch (button) {
+                case ButtonArray::CENTER:
+			//Set the pause
+			command::pauseAtZPos(stepperAxisMMToSteps(pauseAtZPos, Z_AXIS));
+                case ButtonArray::LEFT:
+                        interface::popScreen();
+                        break;
+                case ButtonArray::UP:
+                        // increment less
+			repetitions = Motherboard::getBoard().getInterfaceBoard().getButtonRepetitions();
+			if	( repetitions > 18 )	pauseAtZPos += 10.0;
+			else if ( repetitions > 12 )	pauseAtZPos += 1.0;
+			else if ( repetitions > 6 )	pauseAtZPos += 0.1;
+			else				pauseAtZPos += 0.01;
+                        break;
+                case ButtonArray::DOWN:
+                        // decrement less
+			repetitions = Motherboard::getBoard().getInterfaceBoard().getButtonRepetitions();
+			if	( repetitions > 18 )	pauseAtZPos -= 10.0;
+			else if ( repetitions > 12 )	pauseAtZPos -= 1.0;
+			else if ( repetitions > 6 )	pauseAtZPos -= 0.1;
+			else				pauseAtZPos -= 0.01;
+                        break;
+	        default:
+			break;
+        }
+
+	//Range clamping
+	if ( pauseAtZPos < 0.0 )	pauseAtZPos = 0.0;
+
+	float maxMM = stepperAxisStepsToMM(stepperAxis[Z_AXIS].max_axis_steps_limit, Z_AXIS) + 1.0;	//+1.0 to allow for rounding as
+													//steps per mm stored in eeprom isn't as high
+													//resolution as the xml in RepG
+	if ( pauseAtZPos > maxMM)	pauseAtZPos = maxMM;
+}
+
+ActiveBuildMenu::ActiveBuildMenu(uint8_t optionsMask) :
+	Menu(optionsMask, (uint8_t)0),
+	build_stats_screen((uint8_t)0),
+	pauseAtZPosScreen((uint8_t)0) {
 	reset();
 }
     
 void ActiveBuildMenu::resetState(){
 	itemIndex = 0;
 	firstItemIndex = 0;
-	is_paused = false;
+	is_paused = command::isPaused();
+	if ( is_paused )	itemCount = 6;
+	else			itemCount = 5;
+
+	//If any of the heaters are on, we provide another
+	//menu options, "Heaters Off"
+	if (( is_paused ) && 
+	    ( Motherboard::getBoard().getExtruderBoard(0).getExtruderHeater().get_set_temperature() > 0 || 
+	      Motherboard::getBoard().getExtruderBoard(1).getExtruderHeater().get_set_temperature() > 0 ||
+	      Motherboard::getBoard().getPlatformHeater().get_set_temperature() > 0 )) {
+		itemCount ++;
+	}
 }
 
 void ActiveBuildMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd){
@@ -2177,6 +2896,9 @@ void ActiveBuildMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd){
 			lcd.writeFromPgmspace(STATS_MSG);
             break;
         case 2:
+	    resetState();	//Required to update the pause state if we were previously in
+				//another menu on top of this one
+
             if(is_paused){
 				lcd.writeFromPgmspace(UNPAUSE_MSG);
 		    }else {
@@ -2186,13 +2908,18 @@ void ActiveBuildMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd){
         case 3:
             lcd.writeFromPgmspace(CANCEL_BUILD_MSG);
             break;
+	case 4:
+	    lcd.writeFromPgmspace(PAUSEATZPOS_MSG);
+	    break;
+	case 5:
+	    lcd.writeFromPgmspace(FILAMENT_OPTIONS_MSG);
+	    break;
+	case 6:
+	    lcd.writeFromPgmspace(HEATERS_OFF_MSG);
+	    break;
 	}
 }
 
-void ActiveBuildMenu::pop(void){
-	host::pauseBuild(false);
-}
-    
 void ActiveBuildMenu::handleSelect(uint8_t index){
 	
 	switch (index) {
@@ -2216,8 +2943,23 @@ void ActiveBuildMenu::handleSelect(uint8_t index){
             break;
         case 3:
             // Cancel build
-			interface::pushScreen(&cancel_build_menu);
+			interface::pushScreen(&Motherboard::getBoard().mainMenu.utils.monitorMode.cancelBuildMenu);
             break;
+		case 4:
+			//Handle Pause At ZPos
+			interface::pushScreen(&pauseAtZPosScreen);
+			break;
+		case 5:
+			//Handle filament
+			interface::pushScreen(&Motherboard::getBoard().mainMenu.utils.filament);
+			break;
+		case 6:
+			//Switch all the heaters off
+			Motherboard::getBoard().getExtruderBoard(0).getExtruderHeater().set_target_temperature(0);
+                	Motherboard::getBoard().getExtruderBoard(1).getExtruderHeater().set_target_temperature(0);
+                	Motherboard::getBoard().getPlatformHeater().set_target_temperature(0);
+			reset();
+			break;
 	}
 }
 
@@ -2225,14 +2967,23 @@ void BuildStats::update(LiquidCrystalSerial& lcd, bool forceRedraw){
 	
 	if (forceRedraw) {
 		lcd.clear();
-		
-		lcd.setCursor(0,2);
+
+		lcd.setCursor(0,0);
 		lcd.writeFromPgmspace(BUILD_TIME_MSG);
+
+		lcd.setCursor(0,1);
+		lcd.writeFromPgmspace(Z_POSITION_MSG);
+
+		lcd.setCursor(0,2);
+		lcd.writeFromPgmspace(FILAMENT_MSG);
 
 		lcd.setCursor(0,3);
 		lcd.writeFromPgmspace(LINE_NUMBER_MSG);
 	}
-	
+	 
+	Point position;
+	float filamentUsed, lastFilamentUsed;
+
 	switch (update_count){
 		
 		case 0:
@@ -2240,10 +2991,10 @@ void BuildStats::update(LiquidCrystalSerial& lcd, bool forceRedraw){
 			uint8_t build_minutes;
 			host::getPrintTime(build_hours, build_minutes);
 			
-			lcd.setCursor(14,2);
+			lcd.setCursor(14,0);
 			lcd.writeInt(build_hours,2);
 				
-			lcd.setCursor(17,2);
+			lcd.setCursor(17,0);
 			lcd.writeInt(build_minutes,2);
 			
 			break;
@@ -2253,10 +3004,11 @@ void BuildStats::update(LiquidCrystalSerial& lcd, bool forceRedraw){
 			/// if line number greater than counted, print an indicator that we are over count
 			if(line_number > command::MAX_LINE_COUNT){
 				lcd.setCursor(9,3);
-				/// 10 digits is max for a uint32_t.  If we change the line_count to allow overflow, we'll need to update the digit count here
-				lcd.writeInt(command::MAX_LINE_COUNT, 10);
+				//Replaced with this message, because writeInt / writeInt32 can't display it anyway.
+				//and 1,000,000,000 lines would represent 115 days of printing at 100 moves per second
+				lcd.writeFromPgmspace(PRINTED_TOO_LONG_MSG);
 				lcd.setCursor(19,3);
-				lcd.writeString("+");
+				lcd.writeString((char *)"+");
 			}else{
 				
 				uint8_t digits = 1;
@@ -2267,6 +3019,22 @@ void BuildStats::update(LiquidCrystalSerial& lcd, bool forceRedraw){
 				lcd.setCursor(20-digits,3);
 				lcd.writeInt(line_number, digits);
 			}
+			break;
+	
+		case 2:
+			position = steppers::getPlannerPosition();
+			lcd.setCursor(10, 1);
+			lcd.writeFromPgmspace(BLANK_CHAR_4_MSG);
+			lcd.writeFloat(stepperAxisStepsToMM(position[Z_AXIS], Z_AXIS), 3, LCD_SCREEN_WIDTH - 2);
+			lcd.writeFromPgmspace(MILLIMETERS_MSG);
+			break;	
+
+		case 3:
+			lastFilamentUsed = stepperAxisStepsToMM(command::getLastFilamentLength(0), A_AXIS) + stepperAxisStepsToMM(command::getLastFilamentLength(1), B_AXIS);
+			if ( lastFilamentUsed != 0.0 )	filamentUsed = lastFilamentUsed;
+                        else				filamentUsed = stepperAxisStepsToMM(command::getFilamentLength(0), A_AXIS) + 
+								       stepperAxisStepsToMM(command::getFilamentLength(1), B_AXIS); 
+			printFilamentUsed(filamentUsed, 2, lcd);
 			break;
 		default:
 			break;
@@ -2297,11 +3065,13 @@ void BuildStats::notifyButtonPressed(ButtonArray::ButtonName button){
         case ButtonArray::DOWN:
         case ButtonArray::UP:
 			break;
+        default:
+                break;
 	}
 }
 	
-CancelBuildMenu::CancelBuildMenu() {
-	itemCount = 4;
+CancelBuildMenu::CancelBuildMenu(uint8_t optionsMask) :
+	Menu(optionsMask | IS_CANCEL_SCREEN_MASK, (uint8_t)4) {
 	reset();
 }
 
@@ -2320,11 +3090,14 @@ void CancelBuildMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
     switch (index) {
 	case 0:
 		if((state == host::HOST_STATE_BUILDING) ||
-            (state == host::HOST_STATE_BUILDING_FROM_SD))
+            (state == host::HOST_STATE_BUILDING_FROM_SD) ||
+            (state == host::HOST_STATE_BUILDING_ONBOARD))
             lcd.writeFromPgmspace(CANCEL_MSG);
         else{
-			host::pauseBuild(true);
-            lcd.writeFromPgmspace(CANCEL_PROCESS_MSG);
+			// host::pauseBuild(true);
+            		//lcd.writeFromPgmspace(CANCEL_PROCESS_MSG);
+
+            		lcd.writeFromPgmspace(CANCEL_MSG);
 		}
 		break;
     case 2:
@@ -2335,13 +3108,10 @@ void CancelBuildMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
         break;
 	}
 }
-void CancelBuildMenu::pop(void){
-	host::pauseBuild(false);
-}
 
 void CancelBuildMenu::handleSelect(uint8_t index) {
     
-    host::HostState state = host::getHostState();
+    //host::HostState state = host::getHostState();
     
 	switch (index) {
         case 2:
@@ -2349,14 +3119,18 @@ void CancelBuildMenu::handleSelect(uint8_t index) {
             break;
         case 3:
             // Cancel build
+	    command::addFilamentUsed();
             host::stopBuild();
             break;
 	}
 }
 
 
-MainMenu::MainMenu() {
-	itemCount = 4;
+MainMenu::MainMenu(uint8_t optionsMask) :
+	Menu(optionsMask | _BV((uint8_t)ButtonArray::UP) | _BV((uint8_t)ButtonArray::DOWN), (uint8_t)4),
+	     utils((uint8_t)0),
+	     sdMenu((uint8_t)0),
+	     preheat((uint8_t)0) {
 	reset();
 }
 void MainMenu::resetState() {
@@ -2404,14 +3178,35 @@ void MainMenu::handleSelect(uint8_t index) {
 }
 
 
-UtilitiesMenu::UtilitiesMenu() {
-	itemCount = 13;
-	stepperEnable = false;
+UtilitiesMenu::UtilitiesMenu(uint8_t optionsMask) :
+	     Menu(optionsMask | _BV((uint8_t)ButtonArray::UP) | _BV((uint8_t)ButtonArray::DOWN),
+		  (uint8_t)16
+#ifdef EEPROM_MENU_ENABLE
+		  +1
+#endif
+		     ),
+	     monitorMode((uint8_t)0),
+	     welcome((uint8_t)0),
+	     splash((uint8_t)0),
+	     filament((uint8_t)0),
+	     jogger((uint8_t)0),
+	     set((uint8_t)0),
+	     preheat((uint8_t)0),
+	     profilesMenu((uint8_t)0),
+	     homeOffsetsMode((uint8_t)0),
+	     reset_settings((uint8_t)0),
+	     alignment((uint8_t)0),
+	     filamentOdometer((uint8_t)0)
+#ifdef EEPROM_MENU_ENABLE
+	     , eepromMenu((uint8_t)0)
+#endif
+ 		{
 	blinkLED = false;
 	reset();
 }
 void UtilitiesMenu::resetState(){
 	singleTool = eeprom::isSingleTool();
+	stepperEnable = ( axesEnabled ) ? false : true;
 }
 
 void UtilitiesMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
@@ -2436,37 +3231,51 @@ void UtilitiesMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
 		lcd.writeFromPgmspace(JOG_MSG);
 		break;
 	case 6:
+		lcd.writeFromPgmspace(PROFILES_MSG);
+		break;
+	case 7:
+		lcd.writeFromPgmspace(FILAMENT_ODOMETER_MSG);
+		break;
+	case 8:
 		if(stepperEnable)
 			lcd.writeFromPgmspace(ESTEPS_MSG);
 		else
 			lcd.writeFromPgmspace(DSTEPS_MSG);
 		break;
-	case 7:
+	case 9:
 		if(blinkLED)
 			lcd.writeFromPgmspace(LED_STOP_MSG);
 		else
 			lcd.writeFromPgmspace(LED_BLINK_MSG);
 		break;
-	case 8:
-		lcd.writeFromPgmspace(STARTUP_MSG);
-		break;
-	case 9:
-		lcd.writeFromPgmspace(VERSION_MSG);
-		break;
 	case 10:
-		lcd.writeFromPgmspace(SETTINGS_MSG);
+                lcd.writeFromPgmspace(HOME_OFFSETS_MSG);
 		break;
 	case 11:
+		lcd.writeFromPgmspace(STARTUP_MSG);
+		break;
+	case 12:
+		lcd.writeFromPgmspace(VERSION_MSG);
+		break;
+	case 13:
+		lcd.writeFromPgmspace(SETTINGS_MSG);
+		break;
+	case 14:
 		singleTool = eeprom::isSingleTool();
 		if(singleTool)
 			lcd.writeFromPgmspace(RESET_MSG);
 		else
 			lcd.writeFromPgmspace(NOZZLES_MSG);
 		break;	
-	case 12:
+	case 15:
 		if(!singleTool)
 			lcd.writeFromPgmspace(RESET_MSG);
 		break;
+#ifdef EEPROM_MENU_ENABLE
+	case 16:
+		lcd.writeFromPgmspace(EEPROM_MSG);
+		break;
+#endif
 	}
 }
 
@@ -2497,12 +3306,20 @@ void UtilitiesMenu::handleSelect(uint8_t index) {
                        interface::pushScreen(&jogger);
 			break;
 		case 6:
+			// Profiles
+			interface::pushScreen(&profilesMenu);
+			break;
+		case 7:
+			// Filament Odometer
+			interface::pushScreen(&filamentOdometer);
+			break;
+		case 8:
 			for (int i = 0; i < STEPPER_COUNT; i++) 
 					steppers::enableAxis(i, stepperEnable);
 			lineUpdate = true;
 			stepperEnable = !stepperEnable;
 			break;
-		case 7:
+		case 9:
 			blinkLED = !blinkLED;
 			if(blinkLED)
 				RGB_LED::setLEDBlink(150);
@@ -2510,35 +3327,49 @@ void UtilitiesMenu::handleSelect(uint8_t index) {
 				RGB_LED::setLEDBlink(0);
 			lineUpdate = true;		 
 			 break;
-		case 8:
+		case 10:
+			// Home Offsets
+			interface::pushScreen(&homeOffsetsMode);
+			break;
+		case 11:
 			// startup wizard script
             interface::pushScreen(&welcome);
 			break;
-		case 9:
+		case 12:
 			splash.SetHold(true);
 			interface::pushScreen(&splash);
 			break;
-		case 10:
+		case 13:
 			// settings menu
             interface::pushScreen(&set);
 			break;
-		case 11:
+		case 14:
 			if(singleTool)
 				// restore defaults
 				interface::pushScreen(&reset_settings);
 			else
 				interface::pushScreen(&alignment);
 			break;
-		case 12:
+		case 15:
 			if(!singleTool)
 				// restore defaults
 				interface::pushScreen(&reset_settings);
 			break;
+#ifdef EEPROM_MENU_ENABLE
+		case 16:
+			//Eeprom Menu
+			interface::pushScreen(&eepromMenu);
+			break;
+#endif
 		}
 }
 
-SettingsMenu::SettingsMenu() {
-	itemCount = 6;
+SettingsMenu::SettingsMenu(uint8_t optionsMask) :
+	CounterMenu(optionsMask | _BV((uint8_t)ButtonArray::UP) | _BV((uint8_t)ButtonArray::DOWN), (uint8_t)8
+#ifdef DITTO_PRINT
+		+1
+#endif
+		) {
     reset();
 }
 
@@ -2548,7 +3379,14 @@ void SettingsMenu::resetState(){
     LEDColor = eeprom::getEeprom8(eeprom_offsets::LED_STRIP_SETTINGS, 0);
     heatingLEDOn = eeprom::getEeprom8(eeprom_offsets::LED_STRIP_SETTINGS + blink_eeprom_offsets::LED_HEAT_OFFSET, 1);
     helpOn = eeprom::getEeprom8(eeprom_offsets::FILAMENT_HELP_SETTINGS, 1);
-    accelerationOn = eeprom::getEeprom8(eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::ACTIVE_OFFSET, 0x01);
+    accelerationOn = eeprom::getEeprom8(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::ACTIVE_OFFSET, 0x01);
+    overrideGcodeTempOn = eeprom::getEeprom8(eeprom_offsets::OVERRIDE_GCODE_TEMP, 0);
+    pauseHeatOn = eeprom::getEeprom8(eeprom_offsets::HEAT_DURING_PAUSE, 1);
+
+#ifdef DITTO_PRINT
+    dittoPrintOn = eeprom::getEeprom8(eeprom_offsets::DITTO_PRINT_ENABLED, 0);
+    if ( singleExtruder == 1 ) dittoPrintOn = false;
+#endif
 }
 
 void SettingsMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
@@ -2655,6 +3493,47 @@ void SettingsMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
             else
                 lcd.writeFromPgmspace(OFF_MSG);
             break;
+	 case 6:
+	    lcd.writeFromPgmspace(OVERRIDE_GCODE_TEMP_MSG);
+	    lcd.setCursor(11,2);
+	    if(selectIndex == 6)
+		lcd.writeFromPgmspace(ARROW_MSG);
+	    else
+		lcd.writeFromPgmspace(NO_ARROW_MSG);
+	    lcd.setCursor(14,2);
+	    if(overrideGcodeTempOn)
+		lcd.writeFromPgmspace(ON_MSG);
+	    else
+	    lcd.writeFromPgmspace(OFF_MSG);
+	    break;
+	 case 7:
+	    lcd.writeFromPgmspace(PAUSE_HEAT_MSG);
+	    lcd.setCursor(11,3);
+	    if(selectIndex == 7)
+		lcd.writeFromPgmspace(ARROW_MSG);
+	    else
+		lcd.writeFromPgmspace(NO_ARROW_MSG);
+	    lcd.setCursor(14,3);
+	    if(pauseHeatOn)
+		lcd.writeFromPgmspace(ON_MSG);
+	    else
+	    lcd.writeFromPgmspace(OFF_MSG);
+	    break;
+#ifdef DITTO_PRINT
+	 case 8:
+	    lcd.writeFromPgmspace(DITTO_PRINT_MSG);
+	    lcd.setCursor(11,0);
+	    if(selectIndex == 8)
+		lcd.writeFromPgmspace(ARROW_MSG);
+	    else
+		lcd.writeFromPgmspace(NO_ARROW_MSG);
+	    lcd.setCursor(14,0);
+	    if(dittoPrintOn)
+		lcd.writeFromPgmspace(ON_MSG);
+	    else
+	    lcd.writeFromPgmspace(OFF_MSG);
+	    break;
+#endif
  	}
 }
 
@@ -2737,6 +3616,45 @@ void SettingsMenu::handleCounterUpdate(uint8_t index, bool up){
             else if(accelerationOn < 0)
 				accelerationOn = 1;
 			break;
+	 case 6:
+            // update right counter
+            if(up)
+                overrideGcodeTempOn++;
+            else
+                overrideGcodeTempOn--;
+            // keep within appropriate boundaries    
+            if(overrideGcodeTempOn > 1)
+                overrideGcodeTempOn = 0;
+            else if(overrideGcodeTempOn < 0)
+		overrideGcodeTempOn = 1;
+	    break;
+	 case 7:
+            // update right counter
+            if(up)
+                pauseHeatOn++;
+            else
+                pauseHeatOn--;
+            // keep within appropriate boundaries    
+            if(pauseHeatOn > 1)
+                pauseHeatOn = 0;
+            else if(pauseHeatOn < 0)
+		pauseHeatOn = 1;
+	    break;
+#ifdef DITTO_PRINT
+	 case 8:
+	    if ( singleExtruder == 1 )	break;
+            // update right counter
+            if(up)
+                dittoPrintOn++;
+            else
+                dittoPrintOn--;
+            // keep within appropriate boundaries    
+            if(dittoPrintOn > 1)
+                dittoPrintOn = 0;
+            else if(dittoPrintOn < 0)
+		dittoPrintOn = 1;
+	    break;
+#endif
 	}
     
 }
@@ -2746,8 +3664,9 @@ void SettingsMenu::handleSelect(uint8_t index) {
 	switch (index) {
 		case 0:
 			// update sound preferences
-            eeprom_write_byte((uint8_t*)eeprom_offsets::BUZZ_SETTINGS, soundOn);
-            lineUpdate = 1;
+			eeprom_write_byte((uint8_t*)eeprom_offsets::BUZZ_SETTINGS, soundOn);
+			Piezo::reset();
+			lineUpdate = 1;
 			break;
 		case 1:
 			// update LED preferences
@@ -2772,20 +3691,54 @@ void SettingsMenu::handleSelect(uint8_t index) {
 			lineUpdate = 1;
 			break;
 		case 5:
-			eeprom_write_byte((uint8_t*)eeprom_offsets::ACCELERATION_SETTINGS + acceleration_eeprom_offsets::ACTIVE_OFFSET, accelerationOn);
+			eeprom_write_byte((uint8_t*)eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::ACTIVE_OFFSET, accelerationOn);
+			steppers::reset();
 			lineUpdate = 1;
 			break;
+		case 6:
+			eeprom_write_byte((uint8_t*)eeprom_offsets::OVERRIDE_GCODE_TEMP, overrideGcodeTempOn);
+			lineUpdate = 1;
+			break;
+		case 7:
+			eeprom_write_byte((uint8_t*)eeprom_offsets::HEAT_DURING_PAUSE, pauseHeatOn);
+			lineUpdate = 1;
+			break;
+#ifdef DITTO_PRINT
+		case 8:
+			eeprom_write_byte((uint8_t*)eeprom_offsets::DITTO_PRINT_ENABLED, dittoPrintOn);
+			command::reset();
+			lineUpdate = 1;
+#endif
     }
 }
 
-SDMenu::SDMenu() {
+SDMenu::SDMenu(uint8_t optionsMask) :
+	Menu(optionsMask  | _BV((uint8_t)ButtonArray::UP) | _BV((uint8_t)ButtonArray::DOWN), (uint8_t)0) {
 	reset();
+	updatePhase = 0;
+	updatePhaseDivisor = 0;
+	drawItemLockout = false;
 }
 
 void SDMenu::resetState() {
 	cardNotFound = false;
+	cardBadFormat = false;
+	cardReadError = false;
 	itemCount = countFiles() + 1;
-	
+	updatePhase = 0;	
+	updatePhaseDivisor = 0;
+	lastItemIndex = 0;
+	drawItemLockout = false;
+}
+
+//Returns true if the file is an s3g file
+//Keeping this in C instead of C++ saves 20 bytes
+
+bool isS3GFile(char *filename, uint8_t len) {
+	if ((len >= 4) && 
+	    (filename[len-4]== '.') && (filename[len-3]== 's') &&
+	    (filename[len-2]== '3') && (filename[len-1]== 'g')) return true;
+	return false;
 }
 
 // Count the number of files on the SD card
@@ -2797,8 +3750,24 @@ uint8_t SDMenu::countFiles() {
 	// First, reset the directory index
 	e = sdcard::directoryReset();
 	if (e != sdcard::SD_SUCCESS) {
-		// TODO: report error
-		cardNotFound = true;
+		switch(e) {
+			case sdcard::SD_ERR_NO_CARD_PRESENT:
+				cardNotFound = true;
+				break;
+			case sdcard::SD_ERR_OPEN_FILESYSTEM:
+				cardBadFormat = true;
+				break;
+			case sdcard::SD_ERR_PARTITION_READ:
+			case sdcard::SD_ERR_INIT_FAILED:
+			case sdcard:: SD_ERR_NO_ROOT:
+				cardReadError = true;
+				break;
+			case sdcard::SD_ERR_VOLUME_TOO_BIG:
+				cardTooBig = true;
+				break;
+            		default:
+                		break;
+		}
 		return 0;
 	}
 
@@ -2814,14 +3783,8 @@ uint8_t SDMenu::countFiles() {
 			break;
 		}
 
-		// If it's a dot file, don't count it.
-		if (fnbuf[0] == '.') {
-		}
-		
-		else {
-			if ((fnbuf[idx-3] == 's') && (fnbuf[idx-2] == '3') && (fnbuf[idx-1] == 'g'))
-				count++;
-		}
+		//Only count it if it ends in .s3g
+		if (isS3GFile(fnbuf,idx)) count++;
 
 	} while (e == sdcard::SD_SUCCESS);
 
@@ -2837,7 +3800,25 @@ bool SDMenu::getFilename(uint8_t index, char buffer[], uint8_t buffer_size) {
 	// First, reset the directory list
 	e = sdcard::directoryReset();
 	if (e != sdcard::SD_SUCCESS) {
-                return false;
+        switch(e) {
+			case sdcard::SD_ERR_NO_CARD_PRESENT:
+				cardNotFound = true;
+				break;
+			case sdcard::SD_ERR_OPEN_FILESYSTEM:
+				cardBadFormat = true;
+				break;
+			case sdcard::SD_ERR_PARTITION_READ:
+			case sdcard::SD_ERR_INIT_FAILED:
+		    case sdcard:: SD_ERR_NO_ROOT:
+				cardReadError = true;
+				break;
+			case sdcard::SD_ERR_VOLUME_TOO_BIG:
+				cardTooBig = true;
+				break;
+	                default:
+                 		break;
+		}
+		return false;
 	}
 	
 	int maxFileLength = 64; /// SD card max lenghth
@@ -2851,9 +3832,8 @@ bool SDMenu::getFilename(uint8_t index, char buffer[], uint8_t buffer_size) {
                       return false;
 			}
 			
-		} while ((e == sdcard::SD_SUCCESS) && ((fnbuf[0] == '.')) || 
-			!((fnbuf[idx-3] == 's') && (fnbuf[idx-2] == '3') && (fnbuf[idx-1] == 'g')));
-			
+		} while ((e == sdcard::SD_SUCCESS) && ( ! isS3GFile(fnbuf,idx)));
+
 		if (e != sdcard::SD_SUCCESS) {
                         return false;
 		}
@@ -2869,7 +3849,16 @@ void SDMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
        
        // print error message if no SD card found;
        if(cardNotFound == true) {
-               lcd.writeFromPgmspace(NOCARD_MSG);
+            lcd.writeFromPgmspace(NOCARD_MSG);
+			return;
+		}else if (cardReadError){
+			lcd.writeFromPgmspace(CARDERROR_MSG);
+			return;
+		}else if (cardBadFormat){
+			lcd.writeFromPgmspace(CARDFORMAT_MSG);
+			return;
+		}else if (cardTooBig){
+			lcd.writeFromPgmspace(CARDSIZE_MSG);
 			return;
 		}
 		// print last line for SD card - an exit option
@@ -2878,20 +3867,71 @@ void SDMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
 			return;
 		}
 
-	uint8_t maxFileLength = LCD_SCREEN_WIDTH-1;
+	const uint8_t maxFileLength = host::MAX_FILE_LEN;
 	char fnbuf[maxFileLength];
 
     if ( !getFilename(index, fnbuf, maxFileLength)) {
         interface::popScreen();
-        Motherboard::getBoard().errorResponse(" SD card read error");
+        Motherboard::getBoard().errorResponse(CARDERROR2_MSG);
         return;
 	}
 
-	uint8_t idx;
-	for (idx = 0; (idx < maxFileLength) && (fnbuf[idx] != 0); idx++) {
-		lcd.write(fnbuf[idx]);
+
+        //Figure out length of filename
+        uint8_t filenameLength;
+        for (filenameLength = 0; (filenameLength < maxFileLength) && (fnbuf[filenameLength] != 0); filenameLength++) ;
+
+        uint8_t idx;
+        uint8_t longFilenameOffset = 0;
+        const uint8_t displayWidth = LCD_SCREEN_WIDTH - 1;
+
+        //Support scrolling filenames that are longer than the lcd screen
+        if (filenameLength >= displayWidth) longFilenameOffset = updatePhase % (filenameLength - displayWidth + 1);
+
+        for (idx = 0; (idx < displayWidth) && ((longFilenameOffset + idx) < maxFileLength) &&
+			(fnbuf[longFilenameOffset + idx] != 0); idx++)
+                lcd.write(fnbuf[longFilenameOffset + idx]);
+
+        //Clear out the rest of the line
+        while ( idx < displayWidth ) {
+                lcd.write(' ');
+                idx ++;
+        }
+
+}
+
+void SDMenu::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
+        const uint8_t height = LCD_SCREEN_HEIGHT;
+
+        if (( ! forceRedraw ) && ( ! drawItemLockout )) {
+                //Redraw the last item if we have changed
+                if (((itemIndex/height) == (lastDrawIndex/height)) &&
+                     ( itemIndex != lastItemIndex ))  {
+                        lcd.setCursor(1,lastItemIndex % height);
+                        drawItem(lastItemIndex, lcd);
+                }
+                lastItemIndex = itemIndex;
+
+                lcd.setCursor(1,itemIndex % height);
+                drawItem(itemIndex, lcd);
+        }
+
+        Menu::update(lcd, forceRedraw);
+
+	//Continuous Buttons Fires every 0.1seconds, but the default
+	//menu update is every 0.5 seconds, which is slow for a continuous press.
+	//Menu update rate is changed to 0.1seconds in Menu.hh, we divide
+	//by 5 here to give a filename scrolling update rate of 0.5seconds.
+	if ( ++updatePhaseDivisor >= 5 ) {
+        	updatePhase ++;
+		updatePhaseDivisor = 0;
 	}
-	
+}
+
+void SDMenu::notifyButtonPressed(ButtonArray::ButtonName button) {
+        updatePhase = 0;
+	updatePhaseDivisor = 0;
+        Menu::notifyButtonPressed(button);
 }
 
 void SDMenu::handleSelect(uint8_t index) {
@@ -2902,25 +3942,37 @@ void SDMenu::handleSelect(uint8_t index) {
 		return;
 	}
 	if (host::getHostState() != host::HOST_STATE_READY) {
-		Motherboard::getBoard().errorResponse(" I'm already building");
+	        Motherboard::getBoard().errorResponse(BUILDING_MSG);
 		return;
 	}
 		
-	char* buildName = host::getBuildName();
+        drawItemLockout = true;
 
-    if ( !getFilename(index, buildName, host::MAX_FILE_LEN) ) {
-        interface::popScreen();
-		Motherboard::getBoard().errorResponse(" SD card read error");
-		return;
-	}
+	const prog_uchar *buildError = NULL;
 
-    sdcard::SdErrorCode e;
-	e = host::startBuildFromSD();
+	char *buildName = host::getBuildName();
+
+	if ( getFilename(index, buildName, host::MAX_FILE_LEN) ) {
+		//Files can only be opened if their filename is <=30 characters in length
+		//However the filename can be obtained from the directory entry if it's >30 chars
+		//Because of this truncation, the file extension will be corrupted, so we
+		//check for the file extension again, if it's corrupted, it was too long
+		if ( isS3GFile(buildName, strlen(buildName)) ) {
+			//Do the build
+			sdcard::SdErrorCode e;
+			e = host::startBuildFromSD();
 	
-	if (e != sdcard::SD_SUCCESS) {
-        interface::popScreen();
-		Motherboard::getBoard().errorResponse(" SD card read error");
-		return;
+			if (e != sdcard::SD_SUCCESS) {
+				buildError = CARDERROR2_MSG;
+			}
+		}
+		else buildError = FTOOLONG_MSG;
+	}
+	else buildError = CARDERROR2_MSG;
+
+	if ( buildError ) {
+		interface::popScreen();
+		Motherboard::getBoard().errorResponse(buildError);
 	}
 }
 

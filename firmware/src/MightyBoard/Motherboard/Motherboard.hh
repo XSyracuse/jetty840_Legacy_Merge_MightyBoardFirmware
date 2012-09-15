@@ -34,6 +34,13 @@
 #include "ExtruderBoard.hh"
 #include "Cutoff.hh"
 
+#ifdef DEBUG_VALUE
+	void setDebugValue(uint8_t value);
+#endif
+
+#include "StepperAxis.hh"
+#include "StepperAccelPlanner.hh"
+
 enum status_states{
 	STATUS_NONE = 0,
 	STATUS_HEAT_INACTIVE_SHUTDOWN = 0x40
@@ -62,12 +69,13 @@ public:
         ExtruderBoard& getExtruderBoard(uint8_t id) { if(id == 1){ return Extruder_Two;} else  { return Extruder_One;} }
 
 private:
-
 	/// Microseconds since board initialization
 	volatile micros_t micros;
 
 	/// Private constructor; use the singleton
 	Motherboard();
+	
+	void initClocks();
 
         // TODO: Move this to an interface board slice.
 	Timeout interface_update_timeout;
@@ -75,24 +83,24 @@ private:
 
         /// True if we have an interface board attached
 	bool hasInterfaceBoard;
+
+	LiquidCrystalSerial lcd;
+
+	MessageScreen messageScreen;    ///< Displayed by user-specified messages
+
+public:
+	MainMenu mainMenu;              ///< Main system menu
+	InterfaceBoard interfaceBoard;
+	Thermistor platform_thermistor;
+	Heater platform_heater;
+	bool using_platform;
 	
 	ExtruderBoard Extruder_One;
 	ExtruderBoard Extruder_Two;
 	
 	ButtonArray buttonArray;
-	LiquidCrystalSerial lcd;
-	InterfaceBoard interfaceBoard;
 	
-	MainMenu mainMenu;              ///< Main system menu
-	SplashScreen splashScreen;      ///< Displayed at startup
-	MonitorMode monitorMode;        ///< Displayed during build
-	WelcomeScreen welcomeScreen;	///< Displayed on Startup for the first time
-	MessageScreen messageScreen;    ///< Displayed by user-specified messages
-    
-	Thermistor platform_thermistor;
 	BuildPlatformHeatingElement platform_element;
-	Heater platform_heater;
-	bool using_platform;
 	
 	Cutoff cutoff;
 	bool heatShutdown;  // set if safety cutoff is triggered
@@ -104,6 +112,9 @@ private:
 
 
 public:
+        //2 types of stepper timers depending on if we're using accelerated or not
+        void setupAccelStepperTimer();
+
 	/// Reset the motherboard to its initial state.
 	/// This only resets the board, and does not send a reset
 	/// to any attached toolheads.
@@ -113,7 +124,7 @@ public:
 
 	/// Count the number of steppers available on this board.
         const int getStepperCount() const { return STEPPER_COUNT; }
-	
+
 	/// Get the number of microseconds that have passed since
 	/// the board was initialized.  This value will wrap after
 	/// 2**32 microseconds (ca. 70 minutes); callers should compensate for this.
@@ -127,9 +138,9 @@ public:
 	/// set the interface LEDs to blink
 	void interfaceBlink(int on_time, int off_time);
 
-	/// Perform the timer interrupt routine.
-	void doInterrupt();
-	
+	/// Perform the stepper interrupt routine.
+	void doStepperInterrupt();
+
 	bool isUsingPlatform() { return using_platform; }
 	void setUsingPlatform(bool is_using);
 	void setValve(bool on);
@@ -143,14 +154,12 @@ public:
 	void startButtonWait();
 	void heaterFail(HeaterFailMode mode);
 	/// push an error screen, and wait until button 
-	void errorResponse(char msg[], bool reset = false);
+	void errorResponse(const prog_uchar msg[], bool reset = false);
 	
 	uint8_t GetErrorStatus();
 	
 	/// update microsecond counter
 	void UpdateMicros();
 };
-
-
 
 #endif // BOARDS_MB40_MOTHERBOARD_HH_

@@ -46,7 +46,8 @@ enum BuildState {
 	BUILD_RUNNING = 1,
 	BUILD_FINISHED_NORMALLY = 2,
 	BUILD_PAUSED = 3,
-	BUILD_CANCELED = 4
+	BUILD_CANCELED = 4,
+	BUILD_CANCELLING = 5,
 };
 
 /// Run the host slice. This function handles incoming packets and host resets.
@@ -66,6 +67,9 @@ char* getBuildName();
 /// \return Current host state.
 HostState getHostState();
 
+/// Returns the current build state
+BuildState getBuildState();
+
 /// Start a build from SD card. The build name should be set by overwriting
 /// the value of buildName, provided by #getBuildName().
 /// \return True if build started successfully.
@@ -75,7 +79,10 @@ sdcard::SdErrorCode startBuildFromSD();
 /// no error check here yet, should not have read errors
 void startOnboardBuild(uint8_t  build);
 
-/// Stop the current build
+/// Stop the current build immediately
+void stopBuildNow();
+
+/// Stop the current build, does a pause then stops the print
 void stopBuild();
 
 /// set build state and build name

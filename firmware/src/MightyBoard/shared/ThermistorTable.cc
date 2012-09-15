@@ -40,7 +40,7 @@
 // beta: 4066
 // max adc: 1023
 
-TempTable default_therm_table PROGMEM = {
+const TempTable default_therm_table PROGMEM = {
   {1, 841},
   {54, 255},
   {107, 209},
@@ -90,11 +90,12 @@ int16_t thermistorToCelsius(int16_t reading, int8_t table_idx) {
   int8_t bottom = 0;
   int8_t top = NUMTEMPS-1;
   int8_t mid = (bottom+top)/2;
-  int8_t t;
   Entry e;
   while (mid > bottom) {
-	  t = mid;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winline"
 	  e = getEntry(mid,table_idx);
+#pragma GCC diagnostic pop
 	  if (reading < e.adc) {
 		  top = mid;
 		  mid = (bottom+top)/2;
@@ -103,8 +104,11 @@ int16_t thermistorToCelsius(int16_t reading, int8_t table_idx) {
 		  mid = (bottom+top)/2;
 	  }
   }
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winline"
   Entry eb = getEntry(bottom,table_idx);
   Entry et = getEntry(top,table_idx);
+#pragma GCC diagnostic pop
   if (bottom == 0 && reading < eb.adc) {
 	  // out of scale; safety mode
 	  return 255;

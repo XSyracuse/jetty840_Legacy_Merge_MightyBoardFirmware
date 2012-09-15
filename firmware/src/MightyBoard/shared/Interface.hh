@@ -46,6 +46,9 @@ void pushNoUpdate(Screen *newScreen);
 /// it will not be removed.
 void popScreen();
 
+/// This is called for a specific button and returns true if the button
+/// is currently depressed
+bool isButtonPressed(ButtonArray::ButtonName button);
 
 /// Screen update interrupt. This scans the keypad to look for any changes. To
 /// ensure a consistant user response, it should be called from a medium frequency
@@ -68,9 +71,6 @@ micros_t getUpdateRate();
 
 /// Set Interface board LEDS
 void setLEDs(bool on);
-
-/// set build percentage to be displayed in monitor mode
-void setBuildPercentage(uint8_t percent);
 
 }
 

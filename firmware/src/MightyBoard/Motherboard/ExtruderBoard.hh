@@ -62,9 +62,9 @@ private:
         ExtruderHeatingElement extruder_element;
         Heater extruder_heater;
         
-        Pin Heater_Pin;
-
         uint8_t slave_id;
+
+        Pin Heater_Pin;
 
         CoolingFan coolingFan;
         uint8_t* eeprom_base;

@@ -14,13 +14,16 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>
  */
- 
+
 #include "Host.hh"
 #include "Command.hh"
 #include <string.h>
 #include "Commands.hh"
 #include "Steppers.hh"
-#include "DebugPacketProcessor.hh"
+#include "Configuration.hh"
+#if defined(HONOR_DEBUG_PACKETS) && (HONOR_DEBUG_PACKETS == 1)
+	#include "DebugPacketProcessor.hh"
+#endif
 #include "Timeout.hh"
 #include "Version.hh"
 #include <util/atomic.h>
@@ -33,7 +36,6 @@
 #include "Eeprom.hh"
 #include "EepromMap.hh"
 #include "UtilityScripts.hh"
-#include "Planner.hh"
 #include "stdio.h"
 
 namespace host {
@@ -49,6 +51,7 @@ bool processExtruderQueryPacket(const InPacket& from_host, OutPacket& to_host);
 // Timeout from time first bit recieved until we abort packet reception
 Timeout packet_in_timeout;
 Timeout cancel_timeout;
+Timeout do_host_reset_timeout;
 
 #define HOST_PACKET_TIMEOUT_MS 200
 #define HOST_PACKET_TIMEOUT_MICROS (1000L*HOST_PACKET_TIMEOUT_MS)
@@ -75,11 +78,13 @@ BuildState buildState = BUILD_NONE;
 uint8_t last_print_hours = 0;
 uint8_t last_print_minutes = 0;
 
+uint32_t last_print_line = 0;
+
 /// counter for current print time
 uint8_t print_time_hours = 0;
 Timeout print_time;
 
-const static uint32_t ONE_HOUR = 3600000000;
+const static uint32_t ONE_HOUR = 3600000000U;
 
 
 bool do_host_reset = false;
@@ -87,23 +92,25 @@ bool hard_reset = false;
 bool cancelBuild = false;
 
 void runHostSlice() {
-		
+	// If we're cancelling the build, and we have completed pausing,
+	// then we cancel the build
+	if (( buildState == BUILD_CANCELLING ) && ( command::pauseState() == PAUSE_STATE_PAUSED )) {
+		stopBuildNow();
+	}
+	
         InPacket& in = UART::getHostUART().in;
         OutPacket& out = UART::getHostUART().out;
-	if (out.isSending()) {
-		// still sending; wait until send is complete before reading new host packets.
+	if (out.isSending() && 
+	    (( ! do_host_reset) || (do_host_reset && (! do_host_reset_timeout.hasElapsed())))) {
 		return;
 	}
-    // after cancel print, try to send a msg to repG that print has been canceled
-    // timeout if this is not possible and reset the bot
-	if(cancel_timeout.isActive() && !(cancel_timeout.hasElapsed())){
-		cancelBuild = true;
-		cancel_timeout = Timeout();
-		_delay_us(500000);
-	}
+
     // soft reset the machine unless waiting to notify repG that a cancel has occured
-	if (do_host_reset && !cancelBuild){
+	if (do_host_reset && (!cancelBuild || cancel_timeout.hasElapsed())){
 		
+		if((buildState == BUILD_RUNNING) || (buildState == BUILD_PAUSED)){
+			stopBuild();
+		}
 		do_host_reset = false;
 
 		// reset local board
@@ -129,18 +136,36 @@ void runHostSlice() {
 		} else if (packet_in_timeout.hasElapsed()) {
 			in.timeout();
 		}
+
 	}
 	if (in.hasError()) {
 		// Reset packet quickly and start handling the next packet.
+		
+	/*	out.reset();
+			
 		// Report error code.
-		if (in.getErrorCode() == PacketError::PACKET_TIMEOUT) {
-             Motherboard::getBoard().indicateError(ERR_HOST_PACKET_TIMEOUT);
-		} else{
-             Motherboard::getBoard().indicateError(ERR_HOST_PACKET_MISC);
+		switch (in.getErrorCode()){
+			case PacketError::PACKET_TIMEOUT:
+				out.append8(RC_PACKET_TIMEOUT);
+				break;
+			case PacketError::BAD_CRC:
+				out.append8(RC_CRC_MISMATCH);
+				break;
+			case PacketError::EXCEEDED_MAX_LENGTH:
+				out.append8(RC_PACKET_LENGTH);
+				break;
+			default:
+				out.append8(RC_PACKET_ERROR);
+				break;
 		}
+		*/  	
 		in.reset();
+		//UART::getHostUART().beginSend();
+		//Motherboard::getBoard().indicateError(ERR_HOST_PACKET_MISC);
+		
 	}
 	if (in.isFinished()) {
+		//DEBUG_PIN1.setValue(false);
 		packet_in_timeout.abort();
 		out.reset();
 	  // do not respond to commands if the bot has had a heater failure
@@ -154,7 +179,7 @@ void runHostSlice() {
 		}else if(cancelBuild){
 			out.append8(RC_CANCEL_BUILD);
 			cancelBuild = false;
-			Motherboard::getBoard().indicateError(6);
+			Motherboard::getBoard().indicateError(ERR_CANCEL_BUILD);
 		} else
 #if defined(HONOR_DEBUG_PACKETS) && (HONOR_DEBUG_PACKETS == 1)
 		if (processDebugPacket(in, out)) {
@@ -256,13 +281,16 @@ inline void handleVersion(const InPacket& from_host, OutPacket& to_host) {
 
 // Received driver version info, and request for fw version info.
 // puts fw version into a reply packet, and send it back
-inline void handleGetAdvancedVersion(OutPacket& to_host) {
+inline void handleGetAdvancedVersion(const InPacket& from_host, OutPacket& to_host) {
 
-        to_host.append8(RC_OK);
-        to_host.append16(firmware_version);
-        to_host.append16(internal_version);
-        to_host.append16(0);
-        to_host.append16(0);
+	// we're not doing anything with the host version at the moment
+	from_host.read16(1);	//uint16_t host_version
+	
+	to_host.append8(RC_OK);
+	to_host.append16(firmware_version);
+	to_host.append16(internal_version);
+	to_host.append16(0);
+	to_host.append16(0);
 
 }
 
@@ -282,14 +310,13 @@ inline void handleGetBufferSize(const InPacket& from_host, OutPacket& to_host) {
 
 inline void handleGetPosition(const InPacket& from_host, OutPacket& to_host) {
 	ATOMIC_BLOCK(ATOMIC_FORCEON) {
-		const Point p = planner::getPosition();
+		const Point p = steppers::getStepperPosition();
 		to_host.append8(RC_OK);
 		to_host.append32(p[0]);
 		to_host.append32(p[1]);
 		to_host.append32(p[2]);
 		// From spec:
 		// endstop status bits: (7-0) : | N/A | N/A | z max | z min | y max | y min | x max | x min |
-		Motherboard& board = Motherboard::getBoard();
 		uint8_t endstop_status = steppers::getEndstopStatus();
 		to_host.append8(endstop_status);
 	}
@@ -297,7 +324,7 @@ inline void handleGetPosition(const InPacket& from_host, OutPacket& to_host) {
 
 inline void handleGetPositionExt(const InPacket& from_host, OutPacket& to_host) {
 	ATOMIC_BLOCK(ATOMIC_FORCEON) {
-		const Point p = planner::getPosition();
+		const Point p = steppers::getStepperPosition();
 		to_host.append8(RC_OK);
 		to_host.append32(p[0]);
 		to_host.append32(p[1]);
@@ -311,7 +338,6 @@ inline void handleGetPositionExt(const InPacket& from_host, OutPacket& to_host) 
 #endif
 		// From spec:
 		// endstop status bits: (15-0) : | b max | b min | a max | a min | z max | z min | y max | y min | x max | x min |
-		Motherboard& board = Motherboard::getBoard();
 		uint8_t endstop_status = steppers::getEndstopStatus();
 		
 		to_host.append16((uint16_t)endstop_status);
@@ -328,12 +354,13 @@ inline void handleCaptureToFile(const InPacket& from_host, OutPacket& to_host) {
 inline void handleEndCapture(const InPacket& from_host, OutPacket& to_host) {
 	to_host.append8(RC_OK);
 	to_host.append32(sdcard::finishCapture());
+	sdcard::reset();
 }
 
     // playback from SD
 inline void handlePlayback(const InPacket& from_host, OutPacket& to_host) {
 	to_host.append8(RC_OK);
-	for (int idx = 1; idx < from_host.getLength(); idx++) {
+	for (int idx = 1; (idx < from_host.getLength()) && (idx < MAX_FILE_LEN); idx++) {
 		buildName[idx-1] = from_host.read8(idx);
 	}
 	buildName[MAX_FILE_LEN-1] = '\0';
@@ -343,7 +370,7 @@ inline void handlePlayback(const InPacket& from_host, OutPacket& to_host) {
 }
 
     // retrive SD file names
-inline void handleNextFilename(const InPacket& from_host, OutPacket& to_host) {
+void handleNextFilename(const InPacket& from_host, OutPacket& to_host) {
 	to_host.append8(RC_OK);
 	uint8_t resetFlag = from_host.read8(1);
 	if (resetFlag != 0) {
@@ -372,8 +399,13 @@ inline void handleNextFilename(const InPacket& from_host, OutPacket& to_host) {
 
     // pause command response
 inline void handlePause(const InPacket& from_host, OutPacket& to_host) {
-	/// this command also calls the host::pauseBuild() command
-	pauseBuild(!command::isPaused());
+	//If we're either pausing or unpausing, but we haven't completed
+	//the operation yet, we ignore this request
+	if (!command::pauseIntermediateState()) {
+		/// this command also calls the host::pauseBuild() command
+		pauseBuild(!command::isPaused());
+	}
+
 	to_host.append8(RC_OK);
 }
 
@@ -386,7 +418,7 @@ inline void handleIsFinished(const InPacket& from_host, OutPacket& to_host) {
 	}
 }
     // read value from eeprom
-inline void handleReadEeprom(const InPacket& from_host, OutPacket& to_host) {
+void handleReadEeprom(const InPacket& from_host, OutPacket& to_host) {
     
     uint16_t offset = from_host.read16(1);
     uint8_t length = from_host.read8(3);
@@ -401,7 +433,7 @@ inline void handleReadEeprom(const InPacket& from_host, OutPacket& to_host) {
 /**
  * writes a chunk of data from a input packet to eeprom
  */
-inline void handleWriteEeprom(const InPacket& from_host, OutPacket& to_host) {
+void handleWriteEeprom(const InPacket& from_host, OutPacket& to_host) {
     uint16_t offset = from_host.read16(1);
     uint8_t length = from_host.read8(3);
     uint8_t data[length];
@@ -425,7 +457,7 @@ enum { // bit assignments
 inline void handleExtendedStop(const InPacket& from_host, OutPacket& to_host) {
 	uint8_t flags = from_host.read8(1);
 	if (flags & _BV(ES_STEPPERS)) {
-		planner::abort();
+		steppers::abort();
 	}
 	if (flags & _BV(ES_COMMANDS)) {
 		command::reset();
@@ -444,7 +476,7 @@ void handleBuildStartNotification(CircularBuffer& buf) {
 		case HOST_STATE_BUILDING_FROM_SD:
 			do {
 				newName[idx++] = buf.pop();		
-			} while (newName[idx-1] != '\0');
+			} while ((newName[idx-1] != '\0') && (idx < MAX_FILE_LEN));
 			if(strcmp(newName, "RepG Build"))
 				strcpy(buildName, newName);
 			break;
@@ -454,24 +486,26 @@ void handleBuildStartNotification(CircularBuffer& buf) {
 		case HOST_STATE_BUILDING:
 			do {
 				buildName[idx++] = buf.pop();		
-			} while (buildName[idx-1] != '\0');
+                        } while ((buildName[idx-1] != '\0') && (idx < MAX_FILE_LEN));
+			break;
+		default:
 			break;
 	}
 	startPrintTime();
+	command::clearLineNumber();
 	buildState = BUILD_RUNNING;
 }
 
     // set build state to ready
 void handleBuildStopNotification(uint8_t stopFlags) {
-	uint8_t flags = stopFlags;
-
 	stopPrintTime();
+	last_print_line = command::getLineNumber();
 	buildState = BUILD_FINISHED_NORMALLY;
 	currentState = HOST_STATE_READY;
 }
 
 /// get current print stats if printing, or last print stats if not printing
-inline void handleGetPrintStats(OutPacket& to_host) {
+inline void handleGetBuildStats(OutPacket& to_host) {
         to_host.append8(RC_OK);
  
 		uint8_t hours;
@@ -482,7 +516,11 @@ inline void handleGetPrintStats(OutPacket& to_host) {
         to_host.append8(buildState);
         to_host.append8(hours);
         to_host.append8(minutes);
-        to_host.append32(command::getLineNumber());
+        if((buildState == BUILD_RUNNING) || (buildState == BUILD_PAUSED)){
+			to_host.append32(command::getLineNumber());
+		} else {
+			to_host.append32(last_print_line);
+		}
         to_host.append32(0);// open spot for filament detect info
 }
 /// get current print stats if printing, or last print stats if not printing
@@ -513,6 +551,7 @@ bool processQueryPacket(const InPacket& from_host, OutPacket& to_host) {
 			case HOST_CMD_CLEAR_BUFFER: // equivalent at current time
 			case HOST_CMD_ABORT: // equivalent at current time
 			case HOST_CMD_RESET:
+				command::addFilamentUsed();
 				if (currentState == HOST_STATE_BUILDING
 						|| currentState == HOST_STATE_BUILDING_FROM_SD
 						|| currentState == HOST_STATE_BUILDING_ONBOARD) {
@@ -520,17 +559,21 @@ bool processQueryPacket(const InPacket& from_host, OutPacket& to_host) {
 				}
 
 				do_host_reset = true; // indicate reset after response has been sent
+				do_host_reset_timeout.start(200000);	//Protection against the firmware sending to a down host
 				to_host.append8(RC_OK);
 				return true;
 			case HOST_CMD_GET_BUFFER_SIZE:
 				handleGetBufferSize(from_host,to_host);
 				return true;
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winline"
 			case HOST_CMD_GET_POSITION:
 				handleGetPosition(from_host,to_host);
 				return true;
 			case HOST_CMD_GET_POSITION_EXT:
 				handleGetPositionExt(from_host,to_host);
 				return true;
+#pragma GCC diagnostic pop
 			case HOST_CMD_CAPTURE_TO_FILE:
 				handleCaptureToFile(from_host,to_host);
 				return true;
@@ -565,11 +608,14 @@ bool processQueryPacket(const InPacket& from_host, OutPacket& to_host) {
 			case HOST_CMD_BOARD_STATUS:
 				handleGetBoardStatus(to_host);
 				return true;
-			case HOST_CMD_GET_PRINT_STATS:
-				handleGetPrintStats(to_host);
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winline"
+			case HOST_CMD_GET_BUILD_STATS:
+				handleGetBuildStats(to_host);
 				return true;
+#pragma GCC diagnostic pop
 			case HOST_CMD_ADVANCED_VERSION:
-				handleGetAdvancedVersion(to_host);
+				handleGetAdvancedVersion(from_host, to_host);
 				return true;
 			}
 		}
@@ -587,14 +633,14 @@ char* getMachineName() {
 
 	// If EEPROM is zero, load in a default. The 0 is there on purpose
 	// since this fallback should only happen on EEPROM total failure
-	static PROGMEM prog_uchar defaultMachineName[] =  "The Replicat0r";
+	const static PROGMEM prog_uchar defaultMachineName[] =  "The Replicat0r";
 
 	if (machineName[0] == 0) {
-		for(uint8_t i = 0; i < 14; i++) {
+	        for(uint8_t i = 0; i < 14; i++) {
 			machineName[i] = pgm_read_byte_near(defaultMachineName+i);
 		}
+		machineName[14] = '\0';
 	}
-
 	return machineName;
 }
 
@@ -604,6 +650,10 @@ char* getBuildName() {
 
 HostState getHostState() {
 	return currentState;
+}
+
+BuildState getBuildState() {
+	return buildState;
 }
 
 sdcard::SdErrorCode startBuildFromSD() {
@@ -623,7 +673,7 @@ sdcard::SdErrorCode startBuildFromSD() {
 	
 	command::reset();
 	steppers::reset();
-	planner::abort();
+	steppers::abort();
 	
 
 	currentState = HOST_STATE_BUILDING_FROM_SD;
@@ -637,20 +687,40 @@ void startOnboardBuild(uint8_t  build){
 		currentState = HOST_STATE_BUILDING_ONBOARD;
 	}
 	command::reset();
-	planner::abort();
+	steppers::abort();
 }
 
 // Stop the current build, if any
-void stopBuild() {
+void stopBuildNow() {
     // if building from repG, try to send a cancel msg to repG before reseting 
 	if(currentState == HOST_STATE_BUILDING)
 	{	
 		currentState = HOST_STATE_CANCEL_BUILD;
 		cancel_timeout.start(1000000); //look for commands from repG for one second before resetting
+		cancelBuild = true;
 	}
+	last_print_line = command::getLineNumber();
 	stopPrintTime();
 	do_host_reset = true; // indicate reset after response has been sent
+	do_host_reset_timeout.start(200000);	//Protection against the firmware sending to a down host
 	buildState = BUILD_CANCELED;
+}
+
+// Stop the current build, if any via an intermediate state (BUILD_CANCELLING),
+// where we pause first and when that's complete we call stopBuildNow to cancel the
+// print.  The purpose of the pause is to move the build away from the tool head.
+void stopBuild() {
+	buildState = BUILD_CANCELLING;
+	
+	steppers::abort();
+
+	//If we're already paused, we stop the print now, otherwise we pause
+	//The runSlice picks up this pause later when completed, then calls stopBuildNow
+	if (( command::isPaused() ) || ( command::pauseIntermediateState() )) {
+		stopBuildNow();
+	} else {
+		command::pause(true);
+	}
 }
 
 /// update state variables if print is paused
@@ -658,6 +728,11 @@ void pauseBuild(bool pause){
 	
 	/// don't update time or state if we are already in the desired state
 	if (!(pause == command::isPaused())){
+
+		//If we're either pausing or unpausing, but we haven't completed
+		//the operation yet, we ignore this request
+		if (command::pauseIntermediateState())
+			return;
 		
 		command::pause(pause);
 		if(pause){
@@ -678,6 +753,7 @@ void startPrintTime(){
 void stopPrintTime(){
 	
 	getPrintTime(last_print_hours, last_print_minutes);
+	print_time = Timeout();
 	print_time_hours = 0;
 }
 
@@ -715,12 +791,6 @@ bool processExtruderQueryPacket(const InPacket& from_host, OutPacket& to_host) {
 			to_host.append8(RC_OK);
 			to_host.append16(board.getExtruderBoard(id).getExtruderHeater().get_current_temperature());
 			return true;
-		case SLAVE_CMD_READ_FROM_EEPROM:
-			handleReadEeprom(from_host, to_host);
-			return true;
-		case SLAVE_CMD_WRITE_TO_EEPROM:
-			handleWriteEeprom(from_host, to_host);
-			return true; 	
 		case SLAVE_CMD_IS_TOOL_READY:
 			to_host.append8(RC_OK);
 			to_host.append8(board.getExtruderBoard(id).getExtruderHeater().has_reached_target_temperature()?1:0);

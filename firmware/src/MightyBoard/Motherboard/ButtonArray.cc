@@ -105,3 +105,13 @@ void ButtonArray::clearButtonPress(){
 
 		previousJ = 0x1F;
 }
+
+//Returns true is button is depressed
+bool ButtonArray::isButtonPressed(ButtonArray::ButtonName button) {
+        uint8_t newJ = PINJ;// & 0xFE;
+
+	//Buttons are active low
+	if ( newJ & (1<<button) ) return false;
+
+	return true;
+}

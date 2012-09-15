@@ -51,6 +51,11 @@ public:
 	/// set i2c pot to specified value (0-127 valid)
 	void setPotValue(const uint8_t val);
 
+	/// returns the last pot value set
+	uint8_t getPotValue();
+
+private:
+	uint8_t potValue;
 };
 
 #endif // DIGIPOTS_HH_

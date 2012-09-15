@@ -56,21 +56,31 @@ namespace replicator_axis_offsets{
 }
 
 namespace replicator_axis_lengths{
-	// storing half lengths for X and Y axes because 0,0 is center of build platform.
-	// so we can move +- 1/2 total axis length
-	const static uint32_t axis_lengths[5] = {10685, 69966, 60000, 9627520, 9627520};
-	
-	/// Footnote:
-	/// mm offsets
-	/// X AXIS: 227mm = +-113.5mm,
-	/// Y AXIS: 148mm = +-74mm,
-	/// Z AXIS: 150mm
-	/// AB AXIS: 100000mm
+	// These are the maximum lengths of all axis, and are populated from Replicator G
+	// on connection.  These are reasonable defaults for X/Y/Z/A/B
+	// Each one is the length(in mm's) * steps_per_mm  (from the xml file and the result is rounded down)
+	const static uint32_t axis_lengths[5] = {21369, 13932, 60000, 9627520, 9627520};
+}
 
-	/// steps per mm (from replicator.xml in RepG/machines)
-	/// XY : 94.139704
-	/// Z : 400
-	/// AB : 96.27520187
+namespace replicator_axis_max_feedrates{
+	// These are the maximum feedrates of all axis, and are populated from Replicator G
+	// on connection.  These are reasonable defaults for X/Y/Z/A/B
+	// Each one is the feedrate in mm per minute (extruders are the feedrate of the input filament)
+	const static uint32_t axis_max_feedrates[5] = {18000, 18000, 1170, 1600, 1600};
+}
+
+namespace replicator_axis_steps_per_mm{
+	const static uint32_t axis_steps_per_mm[5] = { 94139704, 94139704, 400000000, 96275202, 96275202};
+
+	/// Footnote:
+	/// Steps per mm for all axis, all values multiplied by 1,000,000
+	/// These values are updated from the settings contained in the machines.xml
+	/// (if different) when ReplicatorG connects to the bot
+	/// X: 94.139704
+	/// Y: 94.139704
+	/// Z: 400
+	/// A: 96.275201870333662468889989185642
+	/// B: 96.275201870333662468889989185642
 }
 
 /**
@@ -105,6 +115,30 @@ const static uint16_t COOLING_FAN_SETTINGS 	= 	0x001A;
 
 // TOTAL MEMORY SIZE PER TOOLHEAD = 28 bytes
 } 
+
+/** EEPROM storage offsets for profiles */
+namespace profile_offsets {
+	#define PROFILES_QUANTITY 4
+	#define PROFILE_NAME_SIZE 8
+	#define PROFILES_INITIALIZED 0xAC
+	#define PROFILES_HOME_POSITIONS_STORED 3	//X,Y,Z = 3
+
+	/// The name of the profile (8 bytes)
+	const static uint16_t PROFILE_NAME			= 0x0000;
+	/// Default locations for axis in steps for X/Y/Z axis
+	/// Same as AXIS_HOME_POSITIONS_STEPS but for only 3 axis
+	/// 3 x 32 bit = 12 bytes
+	const static uint16_t PROFILE_HOME_POSITIONS_STEPS	= 0x0008;
+
+	//Preheat settings for 
+	const static uint16_t PROFILE_PREHEAT_RIGHT_TEMP	= 0x0014;
+	const static uint16_t PROFILE_PREHEAT_LEFT_TEMP		= 0x0016;
+	const static uint16_t PROFILE_PREHEAT_PLATFORM_TEMP	= 0x0018;
+
+	// TOTAL MEMORY SIZE PER PROFILE = 26 bytes
+	#define PROFILE_SIZE      26
+}
+
 
 /**
  * structure to define the general EEPROM map for storing all kinds
@@ -165,44 +199,73 @@ const static uint16_t FILAMENT_HELP_SETTINGS = 0x0160;
 /// This indicates how far out of tolerance the toolhead0 toolhead1 distance is
 /// in steps.  3 x 32 bits = 12 bytes
 const static uint16_t TOOLHEAD_OFFSET_SETTINGS = 0x0162;
-/// Acceleraton settings 22 bytes: 1 byte (on/off), 2 bytes default acceleration rate, 
-/// 10 bytes axis acceleration rates, 8 bytes axis jerk 
-const static uint16_t ACCELERATION_SETTINGS     = 0x016E;
+//28 bytes no longer used, used to be old acceleration area
+const static uint16_t UNUSED		     = 0x016E;
 /// 2 bytes bot status info bytes
 const static uint16_t BOT_STATUS_BYTES = 0x018A;
 /// axis lengths XYZ AB 5*32bit = 20 bytes
 const static uint16_t AXIS_LENGTHS				= 0x018C;
-
+/// axis steps per mm XYZAB 5*32bit = 20 bytes
+const static uint16_t AXIS_STEPS_PER_MM		= 0x01A0;
+/// Filament lifetime counter (in steps) 8 bytes (int64) x 2 (for 2 extruders)
+const static uint16_t FILAMENT_LIFETIME		= 0x01B4;
+/// Filament trip counter (in steps) 8 bytes (int64) x 2 (for 2 extruders)
+const static uint16_t FILAMENT_TRIP		= 0x01C4;
+const static uint16_t OVERRIDE_GCODE_TEMP	= 0x01D4;
+///Location of the profiles, 4 x 26 bytes (PROFILES_QUANTITY * PROFILE_SIZE)
+const static uint16_t PROFILES_BASE		= 0x01D5;
+///1 byte, set to PROFILES_INITIALIZED (0xAC) when profiles have been initialized
+const static uint16_t PROFILES_INIT	        = 0x023D;
+/// Acceleraton settings 60 bytes: 1 byte (on/off) + acceleration settings
+const static uint16_t ACCELERATION2_SETTINGS	 = 0x023E;
+/// axis max feedrates XYZAB 5*32bit = 20 bytes
+const static uint16_t AXIS_MAX_FEEDRATES	 = 0x027A;
+const static uint16_t HEAT_DURING_PAUSE		 = 0x028E;
+const static uint16_t DITTO_PRINT_ENABLED	 = 0x028F;
 
 /// start of free space
-const static uint16_t FREE_EEPROM_STARTS        = 0x01A0;
-
+const static uint16_t FREE_EEPROM_STARTS	 = 0x0290;
 } 
 
 
-#define DEFAULT_ACCELERATION   3000 // mm/s/s
-#define DEFAULT_X_ACCELERATION 3000 // mm/s/s
-#define DEFAULT_Y_ACCELERATION 3000 // mm/s/s
-#define DEFAULT_Z_ACCELERATION 1000 // mm/s/s
-#define DEFAULT_A_ACCELERATION 3000 // mm/s/s
-#define DEFAULT_B_ACCELERATION 3000 // mm/s/s
+#define DEFAULT_MAX_ACCELERATION_AXIS_X 1000
+#define DEFAULT_MAX_ACCELERATION_AXIS_Y 1000
+#define DEFAULT_MAX_ACCELERATION_AXIS_Z 150
+#define DEFAULT_MAX_ACCELERATION_AXIS_A 2000
+#define DEFAULT_MAX_ACCELERATION_AXIS_B 2000
 
-#define DEFAULT_MAX_XY_JERK 20.0 // ms/s 
-#define DEFAULT_MAX_Z_JERK 1.0 // mm/s
-#define DEFAULT_MAX_A_JERK 15.0 // mm/s
-#define DEFAULT_MAX_B_JERK 15.0 // mm/s   
+#define DEFAULT_MAX_ACCELERATION_NORMAL_MOVE   2000
+#define DEFAULT_MAX_ACCELERATION_EXTRUDER_MOVE 2000
 
-#define DEFAULT_MIN_SPEED 15 // mm/s
+#define DEFAULT_MAX_SPEED_CHANGE_X 15
+#define DEFAULT_MAX_SPEED_CHANGE_Y 15
+#define DEFAULT_MAX_SPEED_CHANGE_Z 10
+#define DEFAULT_MAX_SPEED_CHANGE_A 20
+#define DEFAULT_MAX_SPEED_CHANGE_B 20
+
+#define DEFAULT_JKN_ADVANCE_K                  500             // 0.00850 Multiplied by 100000
+#define DEFAULT_JKN_ADVANCE_K2                 5500            // 0.00900 Multiplied by 100000
+
+#define DEFAULT_EXTRUDER_DEPRIME_STEPS_A 0
+#define DEFAULT_EXTRUDER_DEPRIME_STEPS_B 0
+
+#define DEFAULT_SLOWDOWN_FLAG 0x01
 
 #define ACCELERATION_INIT_BIT 7
 
 namespace acceleration_eeprom_offsets{
-	const static uint16_t ACTIVE_OFFSET	= 0x00;
-	const static uint16_t ACCELERATION_RATE_OFFSET = 0x02;
-	const static uint16_t AXIS_RATES_OFFSET = 0x04;
-	const static uint16_t AXIS_JERK_OFFSET = 0x0E;
-	const static uint16_t MINIMUM_SPEED = 0x18;
-	const static uint16_t DEFAULTS_FLAG = 0x1A;
+	const static uint16_t ACTIVE_OFFSET			= 0x00;
+	const static uint16_t MAX_ACCELERATION_AXIS		= 0x02;	//5 * uint16_t
+	const static uint16_t MAX_ACCELERATION_NORMAL_MOVE	= 0x0C;	//uint16_t
+	const static uint16_t MAX_ACCELERATION_EXTRUDER_MOVE	= 0x0E;	//uint16_t
+	const static uint16_t MAX_SPEED_CHANGE			= 0x10;	//5 * uint16_t
+	const static uint16_t JKN_ADVANCE_K			= 0x1A;	//uint32_t
+	const static uint16_t JKN_ADVANCE_K2			= 0x1E;	//uint32_t
+	const static uint16_t EXTRUDER_DEPRIME_STEPS		= 0x22;	//2 * uint16_t (A & B axis)
+	const static uint16_t SLOWDOWN_FLAG			= 0x26;	//uint8_t Bit 0 == 1 is slowdown enabled
+	const static uint16_t DEFAULTS_FLAG			= 0x27;	//uint8_t Bit 7 == 1 is defaults written
+	const static uint16_t FUTURE_USE			= 0x28;	//20 bytes for future use
+	//0x3C is end of acceleration settings (60 bytes long)
 }
 
 // buzz on/off settings
@@ -320,5 +383,6 @@ namespace eeprom {
     void setDefaultsAcceleration();
     void storeToolheadToleranceDefaults();
     void setDefaultAxisHomePositions();
+    void setDefaultsProfiles(uint16_t eeprom_base);
 }
 #endif // EEPROMMAP_HHe

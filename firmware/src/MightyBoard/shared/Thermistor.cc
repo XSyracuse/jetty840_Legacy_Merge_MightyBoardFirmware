@@ -29,9 +29,9 @@ struct ThermTableEntry {
 
 Thermistor::Thermistor(uint8_t analog_pin_in, uint8_t table_index_in) :
     analog_pin(analog_pin_in),
+    raw_valid(false),
     next_sample(0),
-    table_index(table_index_in),
-    raw_valid(false)
+    table_index(table_index_in)
 {
         for (int i = 0; i < SAMPLE_COUNT; i++) {
             sample_buffer[i] = 0;
@@ -80,7 +80,7 @@ Thermistor::SensorState Thermistor::update() {
 		return SS_ERROR_UNPLUGGED;
 	}
 
-	int16_t avg = cumulative / SAMPLE_COUNT;
+	//int16_t avg = cumulative / SAMPLE_COUNT;
 
 	//current_temp = thermistorToCelsius(avg,table_index);
 	current_temp = thermistorToCelsius(temp,table_index);
