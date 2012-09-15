@@ -21,7 +21,7 @@
 
   This module has been heavily modified from the original Marlin (https://github.com/ErikZalm).
   JKN Advance, YAJ (Yet Another Jerk), Advance Pressure Relax and modifications originate from
-  Jetty Firmware (https://github.com/jetty840/G3Firmware34).  These modifications and features are
+  Jetty Firmware (https://github.com/jetty840/G3Firmware).  These modifications and features are
   copyrighted and authored by Dan Newman and Jetty under GPL.  Copyright (c) 2012.
 */
 

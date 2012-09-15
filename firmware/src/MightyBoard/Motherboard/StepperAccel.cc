@@ -22,7 +22,7 @@
 
   This module has been heavily modified from the original Marlin (https://github.com/ErikZalm).
   JKN Advance, YAJ (Yet Another Jerk), Advance Pressure Relax and modifications originate from
-  Jetty Firmware (https://github.com/jetty840/G3Firmware34).  These modifications and features are
+  Jetty Firmware (https://github.com/jetty840/G3Firmware).  These modifications and features are
   copyrighted and authored by Dan Newman and Jetty under GPL.  Copyright (c) 2012.
 */
 
@@ -314,7 +314,13 @@ FORCE_INLINE void setup_next_block() {
 
 	// Setup the next dda's and enabled axis
 	out_bits = current_block->direction_bits;
-	stepperAxisSetHardwareEnabledToMatch(current_block->axesEnabled);
+
+	//if we have e_steps, re-enable the active extruders
+	uint8_t extruderOverriddenAxesEnabled = current_block->axesEnabled;
+	if ( e_steps[0] )	extruderOverriddenAxesEnabled |= A_AXIS;
+	if ( e_steps[1] )	extruderOverriddenAxesEnabled |= B_AXIS;
+
+	stepperAxisSetHardwareEnabledToMatch(extruderOverriddenAxesEnabled);
 
 	// Reset the dda's, doing it this way instead of a loop saves 325 cycles.
 	stepperAxis_dda_reset(X_AXIS, (current_block->dda_master_axis_index == X_AXIS), current_block->step_event_count,
@@ -397,7 +403,7 @@ bool st_interrupt() {
 		// Nothing in the buffer or we have no e steps, deprime
 		if ( deprime_enabled ) {
 			for ( uint8_t e = 0; e < EXTRUDERS; e ++ ) {
-				if ((( current_block == NULL ) || (current_block->steps[A_AXIS + e] == 0 )) && ( ! deprimed[e] )) {
+				if ((( current_block == NULL ) || (! (current_block->axesEnabled & _BV(A_AXIS + e)))) && ( ! deprimed[e] )) {
 
 					if ( extrude_when_negative[e] ) {
 						e_steps[e] += extruder_deprime_steps[e];
