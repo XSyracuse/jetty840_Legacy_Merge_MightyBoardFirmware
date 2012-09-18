@@ -160,6 +160,13 @@ Ditto:
 
 	3. Enable "Ditto Print: in settings and print.
 
+Layer Heights Less Than 0.27mm:
+
+	1. 100, 50 and 10 Micron prints are possible with PrintOMatic in ABS @ 100mm/s (0.1, 0.05, 0.01mm layer heights)
+
+	2. For prints smaller than 100 micron, you will need to set deprime=0 for the extruder (or tune it less than the default 34).
+	   This is because at smaller layer heights, there's less flow and large deprimes will take away too much.
+
 
 New Commands
 ============
