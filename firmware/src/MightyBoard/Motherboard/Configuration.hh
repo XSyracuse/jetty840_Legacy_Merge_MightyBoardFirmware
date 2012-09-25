@@ -349,4 +349,9 @@
 //When defined, the Ditto Printing setting is added to General Settings
 #define DITTO_PRINT
 
+//When defined, the Z axis is clipped to it's maximum limit
+//Applicable to Replicator.  Probably not applicable to ToM/Cupcake due to incorrect length
+//in the various .xml's out there
+#define CLIP_Z_AXIS
+
 #endif // BOARDS_MBV40_CONFIGURATION_HH_

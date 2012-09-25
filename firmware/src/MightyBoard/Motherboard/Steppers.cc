@@ -402,10 +402,12 @@ void setTarget(const Point& target, int32_t dda_interval) {
 	for ( uint8_t i = 0; i < STEPPER_COUNT; i ++ )
 		planner_target[i] = target[i] + (*tool_offsets)[i];
 
+#ifdef CLIP_Z_AXIS
 	//Clip the Z axis so that it can't move outside the build area.
 	//Addresses a specific issue with old start.gcode for the replicator.
 	//It has a G1 Z155 command that was slamming the platform into the floor.  
 	planner_target[Z_AXIS] = stepperAxis_clip_to_max(Z_AXIS, planner_target[Z_AXIS]);
+#endif
 
 	//Calculate the maximum steps of any axis and store in planner_master_steps
 	//Also calculate the step deltas (planner_steps[i]) at the same time.
@@ -449,10 +451,12 @@ void setTargetNew(const Point& target, int32_t us, uint8_t relative) {
 		}
 	}
 
+#ifdef CLIP_Z_AXIS
 	//Clip the Z axis so that it can't move outside the build area.
 	//Addresses a specific issue with old start.gcode for the replicator.
 	//It has a G1 Z155 command that was slamming the platform into the floor.  
 	planner_target[Z_AXIS] = stepperAxis_clip_to_max(Z_AXIS, planner_target[Z_AXIS]);
+#endif
 
         //Calculate the maximum steps of any axis and store in planner_master_steps
         //Also calculate the step deltas (planner_steps[i]) at the same time.
@@ -500,10 +504,12 @@ void setTargetNewExt(const Point& target, int32_t dda_rate, uint8_t relative, fl
 		}
 	}
 
+#ifdef CLIP_Z_AXIS
 	//Clip the Z axis so that it can't move outside the build area.
 	//Addresses a specific issue with old start.gcode for the replicator.
 	//It has a G1 Z155 command that was slamming the platform into the floor.  
 	planner_target[Z_AXIS] = stepperAxis_clip_to_max(Z_AXIS, planner_target[Z_AXIS]);
+#endif
 
         //Calculate the maximum steps of any axis and store in planner_master_steps
         //Also calculate the step deltas (planner_steps[i]) at the same time.
