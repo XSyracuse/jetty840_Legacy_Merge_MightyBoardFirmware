@@ -308,7 +308,7 @@ void retractFilament(bool retract) {
 
 	//Calculate the dda interval, we'll calculate for A and assume B is the same
 	//Get the feedrate for A, we'll use the max_speed_change feedrate for A
-	float retractFeedRateA = (float)eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_SPEED_CHANGE + sizeof(uint16_t) * A_AXIS;
+	float retractFeedRateA = (float)eeprom::getEeprom16(eeprom_offsets::ACCELERATION2_SETTINGS + acceleration_eeprom_offsets::MAX_SPEED_CHANGE + sizeof(uint16_t) * A_AXIS, DEFAULT_MAX_ACCELERATION_AXIS_A);
 
 	int32_t dda_interval = (int32_t)(1000000.0 / (retractFeedRateA * (float)stepperAxis[A_AXIS].steps_per_mm));
 
@@ -619,11 +619,14 @@ bool processExtruderCommandPacket() {
 			host::pauseBuild(!command::isPaused());
 			return true;
 		case SLAVE_CMD_TOGGLE_FAN:
-			board.getExtruderBoard(id).setFan((pop8() & 0x01) != 0);
+			{
+			uint8_t fanCmd = pop8();
+			board.getExtruderBoard(id).setFan((fanCmd & 0x01) != 0);
 #ifdef DITTO_PRINT
 			if ( dittoPrinting && (id == 1) )
-				board.getExtruderBoard(0).setFan((pop8() & 0x01) != 0);
+				board.getExtruderBoard(0).setFan((fanCmd & 0x01) != 0);
 #endif
+			}
 			return true;
 		case SLAVE_CMD_TOGGLE_VALVE:
 			board.setValve((pop8() & 0x01) != 0);
