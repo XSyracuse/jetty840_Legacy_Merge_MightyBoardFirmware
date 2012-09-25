@@ -1341,6 +1341,7 @@ void runCommandSlice() {
 			} else if ( command == HOST_CMD_SET_ACCELERATION_TOGGLE) {
 				if (command_buffer.getLength() >= 2){
 					pop8(); // remove the command code
+					line_number++;
 					uint8_t status = pop8();
 					steppers::setSegmentAccelState(status == 1);
 				}
