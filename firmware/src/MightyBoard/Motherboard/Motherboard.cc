@@ -100,18 +100,18 @@ Motherboard::Motherboard() :
 }
 
 void Motherboard::setupAccelStepperTimer() {
-        TCCR3A = 0x00;
-        TCCR3B = 0x0A; //CTC1 + / 8 = 2Mhz.
-        TCCR3C = 0x00;
-        OCR3A = 0x2000; //1KHz
-        TIMSK3 = 0x02; // turn on OCR3A match interrupt
+        STEPPER_TCCRnA = 0x00;
+        STEPPER_TCCRnB = 0x0A; //CTC1 + / 8 = 2Mhz.
+        STEPPER_TCCRnC = 0x00;
+        STEPPER_OCRnA  = 0x2000; //1KHz
+        STEPPER_TIMSKn = 0x02; // turn on OCR3A match interrupt
 }
 
-#define ENABLE_TIMER_INTERRUPTS		TIMSK2 |= (1<<OCIE2A); \
-                			TIMSK3 |= (1<<OCIE3A)
+#define ENABLE_TIMER_INTERRUPTS		TIMSK2		|= (1<<OCIE2A); \
+                			STEPPER_TIMSKn	|= (1<<STEPPER_OCIEnA)
 
-#define DISABLE_TIMER_INTERRUPTS	TIMSK2 &= ~(1<<OCIE2A); \
-                			TIMSK3 &= ~(1<<OCIE3A)
+#define DISABLE_TIMER_INTERRUPTS	TIMSK2		&= ~(1<<OCIE2A); \
+                			STEPPER_TIMSKn	&= ~(1<<STEPPER_OCIEnA)
 
 // Initialize Timers
 //	0 = Buzzer
@@ -299,11 +299,12 @@ void Motherboard::doStepperInterrupt() {
 	//disabled, we compare the counter to the requested interrupt time
 	//to see if it overflowed.  If it did, then we reset the counter, and
 	//schedule another interrupt for very shortly into the future.
-	if ( TCNT3 >= OCR3A ) {
-		OCR3A = 0x01;	//We set the next interrupt to 1 interval, because this will cause the interrupt to  fire again
-				//on the next chance it has after exiting this interrupt, i.e. it gets queued.
+	if ( STEPPER_TCNTn >= STEPPER_OCRnA ) {
+		STEPPER_OCRnA = 0x01;	//We set the next interrupt to 1 interval, because this will cause the
+					//interrupt to  fire again on the next chance it has after exiting this
+					//interrupt, i.e. it gets queued.
 
-		TCNT3 = 0;	//Reset the timer counter
+		STEPPER_TCNTn = 0;	//Reset the timer counter
 
 		//debug_onscreen1 ++;
 	}
@@ -496,7 +497,7 @@ void Motherboard::UpdateMicros(){
 
 
 /// Timer three comparator match interrupt
-ISR(TIMER3_COMPA_vect) {
+ISR(STEPPER_TIMERn_COMPA_vect) {
 	Motherboard::getBoard().doStepperInterrupt();
 }
 

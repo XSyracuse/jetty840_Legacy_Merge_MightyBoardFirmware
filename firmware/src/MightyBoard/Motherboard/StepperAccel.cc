@@ -73,7 +73,7 @@ volatile static uint32_t	step_events_completed;	// The number of step events exe
 static int32_t		acceleration_time, deceleration_time;
 static uint16_t		acc_step_rate, step_rate;
 static char		step_loops, step_loops_nominal;
-static uint16_t		OCR3A_nominal;
+static uint16_t		OCRnA_nominal;
 
 static bool		deprimed[EXTRUDERS];
 
@@ -162,8 +162,8 @@ static uint8_t		last_active_toolhead = 0;
 
 // Some useful constants
 
-#define ENABLE_STEPPER_DRIVER_INTERRUPT()	TIMSK3 |= (1<<OCIE3A)
-#define DISABLE_STEPPER_DRIVER_INTERRUPT()	TIMSK3 &= ~(1<<OCIE3A)
+#define ENABLE_STEPPER_DRIVER_INTERRUPT()	STEPPER_TIMSKn |= (1<<STEPPER_OCIEnA)
+#define DISABLE_STEPPER_DRIVER_INTERRUPT()	STEPPER_TIMSKn &= ~(1<<STEPPER_OCIEnA)
 
 
 //         __________________________
@@ -296,7 +296,7 @@ FORCE_INLINE void setup_next_block() {
 
 	deceleration_time = 0;
 
-	OCR3A_nominal = calc_timer(current_block->nominal_rate);
+	OCRnA_nominal = calc_timer(current_block->nominal_rate);
 	step_loops_nominal = step_loops;
   
 	if ( current_block->use_accel ) {
@@ -304,12 +304,12 @@ FORCE_INLINE void setup_next_block() {
 		acc_step_rate = current_block->initial_rate;
 		acceleration_time = calc_timer(acc_step_rate);
 		#ifdef OVERSAMPLED_DDA
-			OCR3A = acceleration_time >> OVERSAMPLED_DDA;
+			STEPPER_OCRnA = acceleration_time >> OVERSAMPLED_DDA;
 		#else
-			OCR3A = acceleration_time;
+			STEPPER_OCRnA = acceleration_time;
 		#endif
 	} else {
-		OCR3A = OCR3A_nominal;
+		STEPPER_OCRnA = OCRnA_nominal;
 	}
 
 	// Setup the next dda's and enabled axis
@@ -385,7 +385,7 @@ bool st_interrupt() {
 		if (current_block != NULL) {
 			setup_next_block();
 		} else {
-			OCR3A=2000; // 1kHz.
+			STEPPER_OCRnA=2000; // 1kHz.
 
 			// Buffer is empty, because enabling/disabling axes doesn't require a block to be 
 			// present, we better set the hardware to match the last enable/disable in software
@@ -477,9 +477,9 @@ bool st_interrupt() {
 			// step_rate to timer interval
 			timer = calc_timer(acc_step_rate);
 			#ifdef OVERSAMPLED_DDA
-				OCR3A = timer >> OVERSAMPLED_DDA;
+				STEPPER_OCRnA = timer >> OVERSAMPLED_DDA;
 			#else
-				OCR3A = timer;
+				STEPPER_OCRnA = timer;
 			#endif
 
 			acceleration_time += timer;
@@ -517,9 +517,9 @@ bool st_interrupt() {
 			// step_rate to timer interval
 			timer = calc_timer(step_rate);
 			#ifdef OVERSAMPLED_DDA
-				OCR3A = timer >> OVERSAMPLED_DDA;
+				STEPPER_OCRnA = timer >> OVERSAMPLED_DDA;
 			#else
-				OCR3A = timer;
+				STEPPER_OCRnA = timer;
 			#endif
 
 			deceleration_time += timer;
@@ -531,9 +531,9 @@ bool st_interrupt() {
 			#endif
 
 			#ifdef OVERSAMPLED_DDA
-				OCR3A = OCR3A_nominal >> OVERSAMPLED_DDA;
+				STEPPER_OCRnA = OCRnA_nominal >> OVERSAMPLED_DDA;
 			#else
-				OCR3A = OCR3A_nominal;
+				STEPPER_OCRnA = OCRnA_nominal;
 			#endif
 
 			step_loops = step_loops_nominal;

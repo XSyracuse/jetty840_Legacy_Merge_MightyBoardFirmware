@@ -261,6 +261,17 @@
 //It's a bit slower reading from PROGMEM than SRAM
 #define SQRT_TABLE_IN_PROGMEM
 
+//Definitions for the timer / counter  to use for the stepper interrupt
+//Change this to a different 16 bit interrupt if you need to
+#define STEPPER_OCRnA			OCR3A
+#define STEPPER_TIMSKn			TIMSK3
+#define STEPPER_OCIEnA			OCIE3A
+#define STEPPER_TCCRnA			TCCR3A
+#define STEPPER_TCCRnB			TCCR3B
+#define STEPPER_TCCRnC			TCCR3C
+#define STEPPER_TCNTn			TCNT3
+#define STEPPER_TIMERn_COMPA_vect	TIMER3_COMPA_vect
+
 //Oversample the dda to provide less jitter.
 //To switch off oversampling, comment out
 //2 is the number of bits, as in a bit shift.  So << 2 = multiply by 4
