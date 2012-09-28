@@ -1025,7 +1025,11 @@ void runCommandSlice() {
 			    (command != HOST_CMD_SET_BUILD_PERCENT ) &&
 			    (command != HOST_CMD_CHANGE_TOOL ) &&
 			    (command != HOST_CMD_SET_POSITION_EXT) &&
-			    (command != HOST_CMD_SET_ACCELERATION_TOGGLE)) {
+			    (command != HOST_CMD_SET_ACCELERATION_TOGGLE) &&
+			    (command != HOST_CMD_RECALL_HOME_POSITION) &&
+			    (command != HOST_CMD_FIND_AXES_MINIMUM) &&
+			    (command != HOST_CMD_FIND_AXES_MAXIMUM) &&
+			    (command != HOST_CMD_TOOL_COMMAND)) {
        	                         if ( ! st_empty() )     return;
        	                 }
 
