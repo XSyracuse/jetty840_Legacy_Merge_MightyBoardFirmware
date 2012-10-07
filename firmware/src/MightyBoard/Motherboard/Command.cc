@@ -67,6 +67,7 @@ uint8_t buildPercentage = 101;
 
 #ifdef DITTO_PRINT
 	bool dittoPrinting = false;
+	bool deleteAfterUse = true;
 #endif
 
 
@@ -252,6 +253,7 @@ void reset() {
 	buildPercentage = 101;
         pauseAtZPos(0);
 	pauseAtZPosActivated = false;
+	deleteAfterUse = true;
 	for ( uint8_t i = 0; i < STEPPER_COUNT; i ++ )
 		pausedDigiPots[i] = 0;
 
@@ -314,7 +316,8 @@ void retractFilament(bool retract) {
 
 #ifdef DITTO_PRINT
 	if ( dittoPrinting ) {
-		targetPosition[A_AXIS] = targetPosition[B_AXIS];
+		if ( currentToolIndex == 0 )	targetPosition[B_AXIS] = targetPosition[A_AXIS];
+		else				targetPosition[A_AXIS] = targetPosition[B_AXIS];
 	}
 #endif
 
@@ -369,7 +372,8 @@ void platformAccess(bool clearPlatform) {
 
 #ifdef DITTO_PRINT
    if ( dittoPrinting ) {
-	targetPosition[A_AXIS] = targetPosition[B_AXIS];
+	if ( currentToolIndex == 0 )	targetPosition[B_AXIS] = targetPosition[A_AXIS];
+	else				targetPosition[A_AXIS] = targetPosition[B_AXIS];
    }
 #endif
 
@@ -449,7 +453,8 @@ static void handleMovementCommand(const uint8_t &command) {
 
 #ifdef DITTO_PRINT
    			if ( dittoPrinting ) {
-				a = b;
+				if ( currentToolIndex == 0 )	b = a;
+				else				a = b;
 			}
 #endif
 
@@ -480,11 +485,19 @@ static void handleMovementCommand(const uint8_t &command) {
 
 #ifdef DITTO_PRINT
    			if ( dittoPrinting ) {
-				a = b;
+				if ( currentToolIndex == 0 ) {
+					b = a;
 
-				//Set A to be the same as B
-				relative &= ~(_BV(A_AXIS));
-				if ( relative & _BV(B_AXIS) )	relative |= _BV(A_AXIS);
+					//Set B to be the same as A
+					relative &= ~(_BV(B_AXIS));
+					if ( relative & _BV(A_AXIS) )	relative |= _BV(B_AXIS);
+				} else {
+					a = b;
+
+					//Set A to be the same as B
+					relative &= ~(_BV(A_AXIS));
+					if ( relative & _BV(B_AXIS) )	relative |= _BV(A_AXIS);
+				}
 			}
 #endif
 
@@ -525,11 +538,19 @@ static void handleMovementCommand(const uint8_t &command) {
 
 #ifdef DITTO_PRINT
    			if ( dittoPrinting ) {
-				a = b;
+				if ( currentToolIndex == 0 ) {
+					b = a;
 
-				//Set A to be the same as B
-				relative &= ~(_BV(A_AXIS));
-				if ( relative & _BV(B_AXIS) )	relative |= _BV(A_AXIS);
+					//Set B to be the same as A
+					relative &= ~(_BV(B_AXIS));
+					if ( relative & _BV(A_AXIS) )	relative |= _BV(B_AXIS);
+				} else {
+					a = b;
+
+					//Set A to be the same as B
+					relative &= ~(_BV(A_AXIS));
+					if ( relative & _BV(B_AXIS) )	relative |= _BV(A_AXIS);
+				}
 			}
 #endif
 
@@ -552,67 +573,46 @@ static void handleMovementCommand(const uint8_t &command) {
 	}
 }
 
-bool processExtruderCommandPacket() {
-	Motherboard& board = Motherboard::getBoard();
-        uint8_t	id = pop8();
-		uint8_t command = pop8();
-		pop8();	//length
+//If overrideToolIndex = -1, the toolIndex specified in the packet is used, otherwise
+//the toolIndex specified by overrideToolIndex is used
 
-		int16_t temp;
-#ifdef DITTO_PRINT
-		int16_t temp2 = 0;
-#endif
+bool processExtruderCommandPacket(int8_t overrideToolIndex) {
+	Motherboard& board = Motherboard::getBoard();
+		//command_buffer[0] is the command code, i.e. HOST_CMD_TOOL_COMMAND
+
+                //Handle the tool index and override it if we need to
+                uint8_t toolIndex = command_buffer[1];
+                if ( overrideToolIndex != -1 )  toolIndex = (uint8_t)overrideToolIndex;
+
+		uint8_t command = command_buffer[2];
+		//command_buffer[3] - Payload length
+
+		int16_t *temp;
 
 		switch (command) {
 		case SLAVE_CMD_SET_TEMP:
-			temp = pop16();
-			if ( temp == 0 )	addFilamentUsed();
+			temp = (int16_t *)&command_buffer[4];
+			if ( *temp == 0 )	addFilamentUsed();
 
 			/// Handle override gcode temp
-			if (( temp ) && ( eeprom::getEeprom8(eeprom_offsets::OVERRIDE_GCODE_TEMP, 0) )) {
-				temp = eeprom::getEeprom16(eeprom_offsets::PREHEAT_SETTINGS + id * sizeof(int16_t), 220);
+			if (( *temp ) && ( eeprom::getEeprom8(eeprom_offsets::OVERRIDE_GCODE_TEMP, 0) )) {
+				*temp = eeprom::getEeprom16(eeprom_offsets::PREHEAT_SETTINGS + toolIndex * sizeof(int16_t), 220);
 			}
-
-#ifdef DITTO_PRINT
-			//If we're ditto printing, figure out what the temperature for the B axis should be
-			if ( dittoPrinting && (id == 1) ) {
-				temp2 = temp;
-				if (( temp2 ) && ( eeprom::getEeprom8(eeprom_offsets::OVERRIDE_GCODE_TEMP, 0) )) {
-					temp2 = eeprom::getEeprom16(eeprom_offsets::PREHEAT_SETTINGS + 0 * sizeof(int16_t), 220);
-				}
-			}
-#endif
 
 #ifdef DEBUG_NO_HEAT_NO_WAIT
-			temp  = 0;
-	#ifdef DITTO_PRINT
-			temp2 = 0;
-	#endif
+			*temp  = 0;
 #endif
 
-			board.getExtruderBoard(id).getExtruderHeater().set_target_temperature(temp);
+			board.getExtruderBoard(toolIndex).getExtruderHeater().set_target_temperature(*temp);
 			/// if platform is actively heating and extruder is not cooling down, pause extruder
-			if(board.getPlatformHeater().isHeating() && !board.getPlatformHeater().isCooling() && !board.getExtruderBoard(id).getExtruderHeater().isCooling()){
+			if(board.getPlatformHeater().isHeating() && !board.getPlatformHeater().isCooling() && !board.getExtruderBoard(toolIndex).getExtruderHeater().isCooling()){
 				check_temp_state = true;
-				board.getExtruderBoard(id).getExtruderHeater().Pause(true);
+				board.getExtruderBoard(toolIndex).getExtruderHeater().Pause(true);
 			}  /// else ensure extruder is not paused  
 			else {
-				board.getExtruderBoard(id).getExtruderHeater().Pause(false);
+				board.getExtruderBoard(toolIndex).getExtruderHeater().Pause(false);
 			}
 
-#ifdef DITTO_PRINT
-			if ( dittoPrinting && (id == 1) ) {
-				board.getExtruderBoard(0).getExtruderHeater().set_target_temperature(temp2);
-				/// if platform is actively heating and extruder is not cooling down, pause extruder
-				if(board.getPlatformHeater().isHeating() && !board.getPlatformHeater().isCooling() && !board.getExtruderBoard(0).getExtruderHeater().isCooling()){
-					check_temp_state = true;
-					board.getExtruderBoard(0).getExtruderHeater().Pause(true);
-				}  /// else ensure extruder is not paused  
-				else {
-					board.getExtruderBoard(0).getExtruderHeater().Pause(false);
-				}
-			}
-#endif
 			return true;
 		// can be removed in process via host query works OK
  		case SLAVE_CMD_PAUSE_UNPAUSE:
@@ -620,32 +620,28 @@ bool processExtruderCommandPacket() {
 			return true;
 		case SLAVE_CMD_TOGGLE_FAN:
 			{
-			uint8_t fanCmd = pop8();
-			board.getExtruderBoard(id).setFan((fanCmd & 0x01) != 0);
-#ifdef DITTO_PRINT
-			if ( dittoPrinting && (id == 1) )
-				board.getExtruderBoard(0).setFan((fanCmd & 0x01) != 0);
-#endif
+			uint8_t fanCmd = command_buffer[4];
+			board.getExtruderBoard(toolIndex).setFan((fanCmd & 0x01) != 0);
 			}
 			return true;
 		case SLAVE_CMD_TOGGLE_VALVE:
-			board.setValve((pop8() & 0x01) != 0);
+			board.setValve((command_buffer[4] & 0x01) != 0);
 			return true;
 		case SLAVE_CMD_SET_PLATFORM_TEMP:
 			board.setUsingPlatform(true);
 
-			temp = pop16();
+			temp = (int16_t *)&command_buffer[4];
 
 #ifdef DEBUG_NO_HEAT_NO_WAIT
-			temp = 0;
+			*temp = 0;
 #endif
 
 			/// Handle override gcode temp
-			if (( temp ) && ( eeprom::getEeprom8(eeprom_offsets::OVERRIDE_GCODE_TEMP, 0) )) {
-				temp = eeprom::getEeprom16(eeprom_offsets::PREHEAT_SETTINGS + preheat_eeprom_offsets::PREHEAT_PLATFORM_OFFSET, 100);
+			if (( *temp ) && ( eeprom::getEeprom8(eeprom_offsets::OVERRIDE_GCODE_TEMP, 0) )) {
+				*temp = eeprom::getEeprom16(eeprom_offsets::PREHEAT_SETTINGS + preheat_eeprom_offsets::PREHEAT_PLATFORM_OFFSET, 100);
 			}
 
-			board.getPlatformHeater().set_target_temperature(temp);
+			board.getPlatformHeater().set_target_temperature(*temp);
 			// pause extruder heaters platform is heating up
 			bool pause_state; /// avr-gcc doesn't allow cross-initializtion of variables within a switch statement
 			pause_state = false;
@@ -659,35 +655,16 @@ bool processExtruderCommandPacket() {
 			return true;
         // not being used with 5D
 		case SLAVE_CMD_TOGGLE_MOTOR_1:
-			pop8();
-			return true;
-        // not being used with 5D
 		case SLAVE_CMD_TOGGLE_MOTOR_2: 
-			pop8();
-			return true;
 		case SLAVE_CMD_SET_MOTOR_1_PWM:
-			pop8();
-			return true;
 		case SLAVE_CMD_SET_MOTOR_2_PWM:
-			pop8();
-			return true;
 		case SLAVE_CMD_SET_MOTOR_1_DIR:
-			pop8();
-			return true;
 		case SLAVE_CMD_SET_MOTOR_2_DIR:
-			pop8();
-			return true;
 		case SLAVE_CMD_SET_MOTOR_1_RPM:
-			pop32();
-			return true;
 		case SLAVE_CMD_SET_MOTOR_2_RPM:
-			pop32();
-			return true;
 		case SLAVE_CMD_SET_SERVO_1_POS:
-			pop8();
-			return true;
 		case SLAVE_CMD_SET_SERVO_2_POS:
-			pop8();
+			//command_buffer[4]
 			return true;
 		}
 	return false;
@@ -858,6 +835,7 @@ void handlePauseState(void) {
 
 // A fast slice for processing commands and refilling the stepper queue, etc.
 void runCommandSlice() {
+
     // get command from SD card if building from SD
 	if (sdcard::isPlaying()) {
 		while (command_buffer.getRemainingCapacity() > 0 && sdcard::playbackHasNext()) {
@@ -951,7 +929,7 @@ void runCommandSlice() {
 		else if(!Motherboard::getBoard().getExtruderBoard(currentToolIndex).getExtruderHeater().isHeating()){
 #ifdef DITTO_PRINT
 			if ( dittoPrinting ) {
-				if (( currentToolIndex == 1 ) && (!Motherboard::getBoard().getExtruderBoard(0).getExtruderHeater().isHeating()))
+				if (!Motherboard::getBoard().getExtruderBoard((currentToolIndex == 0 ) ? 1 : 0).getExtruderHeater().isHeating())
 					mode = READY;
 			}
 			else 
@@ -960,7 +938,7 @@ void runCommandSlice() {
 		}else if( Motherboard::getBoard().getExtruderBoard(currentToolIndex).getExtruderHeater().has_reached_target_temperature()){
 #ifdef DITTO_PRINT
 			if ( dittoPrinting ) {
-				if (( currentToolIndex == 1 ) && (Motherboard::getBoard().getExtruderBoard(0).getExtruderHeater().has_reached_target_temperature()))
+				if (Motherboard::getBoard().getExtruderBoard((currentToolIndex == 0) ? 1 : 0).getExtruderHeater().has_reached_target_temperature())
             				mode = READY;
 			}
 			else 
@@ -1052,9 +1030,15 @@ void runCommandSlice() {
 
 #ifdef DITTO_PRINT
 					if ( dittoPrinting ) {
-						//Set A to be the same as B
-						axes &= ~(_BV(A_AXIS));
-						if ( axes & _BV(B_AXIS) )   axes |= _BV(A_AXIS);
+						if ( currentToolIndex == 0 ) {
+							//Set B to be the same as A
+							axes &= ~(_BV(B_AXIS));
+							if ( axes & _BV(A_AXIS) )	axes |= _BV(B_AXIS);
+						} else {
+							//Set A to be the same as B
+							axes &= ~(_BV(A_AXIS));
+							if ( axes & _BV(B_AXIS) )	axes |= _BV(A_AXIS);
+						}
 					}
 #endif
 
@@ -1077,7 +1061,8 @@ void runCommandSlice() {
 
 #ifdef DITTO_PRINT
 					if ( dittoPrinting ) {
-						a = b;
+						if ( currentToolIndex == 0 )	b = a;
+						else				a = b;
 					}
 #endif
 
@@ -1293,9 +1278,44 @@ void runCommandSlice() {
 				if (command_buffer.getLength() >= 4) { // needs a payload
 					uint8_t payload_length = command_buffer[3];
 					if (command_buffer.getLength() >= 4U+payload_length) {
-							pop8(); // remove the command code
-							line_number++;
-							processExtruderCommandPacket();
+#ifdef DITTO_PRINT
+							if ( dittoPrinting ) {
+								//Delete after use toggles, so that
+								//when deleteAfterUse = false, it's the 1st call of the extruder command
+								//and we copy to the other extruder.  When true, it's the 2nd call if the
+								//extruder command, and we use the tool index specified in the command
+								if ( deleteAfterUse )	deleteAfterUse = false;
+								else			deleteAfterUse = true;
+							} else
+#endif
+								deleteAfterUse = true;  //ELSE
+
+
+							//If we're not setting a temperature, or toggling a fan, then we don't
+							//"ditto print" the command, so we delete after use
+							if (( command_buffer[2] != SLAVE_CMD_SET_TEMP ) &&
+							    ( command_buffer[2] != SLAVE_CMD_TOGGLE_FAN ))
+								deleteAfterUse = true;
+
+							//If we're copying this command due to ditto printing, then we need to switch
+							//the extruder controller by switching toolindex to the other extruder
+							int8_t overrideToolIndex = -1;
+							if ( ! deleteAfterUse ) {
+								if ( command_buffer[1] == 0 )	overrideToolIndex = 1;
+								else				overrideToolIndex = 0;
+							}
+
+							processExtruderCommandPacket(overrideToolIndex);
+
+							//Delete the packet from the buffer
+							if ( deleteAfterUse ) {
+								//We start from 1 not 0, because byte 0 was already removed in the pop8
+								//above
+								for ( uint8_t i = 0; i < (4U + payload_length); i ++ )
+									pop8();
+
+								line_number++;
+							}
 				}
 			}
 			} else if (command == HOST_CMD_SET_BUILD_PERCENT){

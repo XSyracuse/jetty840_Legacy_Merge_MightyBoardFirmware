@@ -156,7 +156,7 @@ Ditto:
 
 	1. Make sure objects width is less than the distance between the 2 nozzles
 
-	2. Build an object as usual in RepG, just make sure it's built to the left extruder.
+	2. Build an object as usual in RepG to either the left or right extruder
 
 	3. Enable "Ditto Print: in settings and print.
 
