@@ -231,7 +231,7 @@
 
 //If defined, enable an additional Utilities menu that allows erasing, saving and loading
 //of eeprom data
-//#define EEPROM_MENU_ENABLE
+#define EEPROM_MENU_ENABLE
 
 //If defined, the planner is constrained to a pipeline size of 1,
 //this means that acceleration still happens, but only on a per block basis,

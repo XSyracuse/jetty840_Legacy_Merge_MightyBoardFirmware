@@ -360,4 +360,14 @@ void reset() {
 	}
 }
 
+/// Return true if file name exists on the SDCard
+bool fileExists(const char* name)
+{
+  struct fat_dir_entry_struct fileEntry;
+	
+  directoryReset();
+
+  return findFileInDir(name, &fileEntry);
+}
+
 } // namespace sdcard

@@ -855,8 +855,16 @@ protected:
         void drawItem(uint8_t index, LiquidCrystalSerial& lcd);
 
         void handleSelect(uint8_t index);
+
+	void update(LiquidCrystalSerial& lcd, bool forceRedraw);
+
+	void notifyButtonPressed(ButtonArray::ButtonName button);
 private:
 	uint8_t safetyGuard;
+
+	bool warningScreen;
+	
+	int8_t itemSelected;
 };
 
 #endif

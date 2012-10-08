@@ -118,6 +118,9 @@ namespace sdcard {
     /// Check if there was an error with the last read and we should retry
     uint32_t getFileSize();
 
+    /// Return true if file name exists on the SDCard
+    bool fileExists(const char* name);
+
 } // namespace sdcard
 
 #endif // SDCARD_HH_

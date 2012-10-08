@@ -2646,6 +2646,124 @@ void EepromMenu::resetState() {
         itemIndex = 0;
         firstItemIndex = 0;
 	safetyGuard = 0;
+	itemSelected = -1;
+	warningScreen = true;
+}
+
+void EepromMenu::update(LiquidCrystalSerial& lcd, bool forceRedraw) {
+	if ( warningScreen ) {
+		if ( forceRedraw ) {
+			const static PROGMEM prog_uchar msg1[]		= "This menu can make";
+			const static PROGMEM prog_uchar msg2[]		= "your bot inoperable.";
+			const static PROGMEM prog_uchar msg4[]		= "Press UP to cont";
+
+			lcd.setCursor(0,0);
+			lcd.writeFromPgmspace(msg1);
+
+			lcd.setCursor(0,1);
+			lcd.writeFromPgmspace(msg2);
+
+			lcd.setCursor(0,3);
+			lcd.writeFromPgmspace(msg4);
+		}
+	}
+	else {
+		if ( itemSelected != -1 ) {
+			lcd.clear();
+			lcd.setCursor(0,0);
+		}
+
+		const static PROGMEM prog_uchar message_dump[]		= "Saving...";
+		const static PROGMEM prog_uchar message_restore[]	= "Restoring...";
+		const static PROGMEM prog_uchar message_erase[]		= "Erasing...";
+
+		const char dumpFilename[] = "eeprom_dump.bin";
+
+		const static PROGMEM prog_uchar message_error[]		= "Error:";
+
+		switch ( itemSelected ) {
+			case 0:	//Dump
+				if ( ! sdcard::fileExists(dumpFilename) ) {
+					lcd.writeFromPgmspace(message_dump);
+					if ( ! eeprom::saveToSDFile(dumpFilename) ) {
+						const static PROGMEM prog_uchar msg1[]	= "Write Failed!";
+						lcd.clear();
+						lcd.setCursor(0,0);
+						lcd.writeFromPgmspace(msg1);
+						_delay_us(5000000);
+					}
+				} else {
+					const static PROGMEM prog_uchar msg3[]	= "File exists!";
+					lcd.clear();
+					lcd.setCursor(0,0);
+					lcd.writeFromPgmspace(message_error);
+					lcd.setCursor(0,1);
+					lcd.writeString((char *)dumpFilename);
+					lcd.setCursor(0,2);
+					lcd.writeFromPgmspace(msg3);
+					_delay_us(5000000);
+				}
+				interface::popScreen();
+				break;
+
+			case 1: //Restore
+				if ( sdcard::fileExists(dumpFilename) ) {
+					lcd.writeFromPgmspace(message_restore);
+					if ( ! eeprom::restoreFromSDFile(dumpFilename) ) {
+						const static PROGMEM prog_uchar msg1[]	= "Read Failed!";
+						const static PROGMEM prog_uchar msg2[]	= "Eeprom maybe";
+						const static PROGMEM prog_uchar msg3[]	= "corrupt";
+						lcd.clear();
+						lcd.setCursor(0,0);
+						lcd.writeFromPgmspace(msg1);
+						lcd.setCursor(0,1);
+						lcd.writeFromPgmspace(msg2);
+						lcd.setCursor(0,2);
+						lcd.writeFromPgmspace(msg3);
+						_delay_us(5000000);
+					}
+					host::stopBuildNow();
+				} else {
+					const static PROGMEM prog_uchar msg3[]	= "File not found!";
+					lcd.clear();
+					lcd.setCursor(0,0);
+					lcd.writeFromPgmspace(message_error);
+					lcd.setCursor(0,1);
+					lcd.writeString((char *)dumpFilename);
+					lcd.setCursor(0,2);
+					lcd.writeFromPgmspace(msg3);
+					_delay_us(5000000);
+					interface::popScreen();
+				}
+				break;
+
+			case 2: //Erase
+				lcd.writeFromPgmspace(message_erase);
+				_delay_us(5000000);
+				eeprom::erase();
+				interface::popScreen();
+				host::stopBuildNow();
+				break;
+			default:
+				Menu::update(lcd, forceRedraw);
+				break;
+		}
+
+		lcd.setCursor(0,3);
+		if ( safetyGuard >= 1 ) {
+			const static PROGMEM prog_uchar msg1[]	= "* Press ";
+			const static PROGMEM prog_uchar msg2[]	= "x more!";
+
+			lcd.writeFromPgmspace(msg1);
+			lcd.writeInt((uint16_t)(4-safetyGuard),1);
+			lcd.writeFromPgmspace(msg2);
+		} else {
+			const static PROGMEM prog_uchar blank[]	= "                ";
+			lcd.writeFromPgmspace(blank);
+		}
+
+		itemSelected = -1;
+	}
 }
 
 void EepromMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
@@ -2663,40 +2781,51 @@ void EepromMenu::drawItem(uint8_t index, LiquidCrystalSerial& lcd) {
 }
 
 void EepromMenu::handleSelect(uint8_t index) {
-       // Note stack filename buffer used by saveToSDFile() and
-       // restoreFromSDFile() is 16 bytes -- just large enough
-       // for this name
-	const static PROGMEM prog_char dumpFilename[] = "eeprom_dump.bin";
-
-        switch (index) {
-                case 0:
-                        //Dump
+	switch (index)
+	{
+		case 0:
+			//Dump
 			safetyGuard = 0;
-			Piezo::setTone(NOTE_A4,100);
-			eeprom::saveToSDFile(dumpFilename);
-                        interface::popScreen();
-                        break;
-                case 1:
+			itemSelected = 0;
+			break;
+		case 1:
 			//Restore
 			safetyGuard ++;
 			if ( safetyGuard > 3 ) {
-				Piezo::setTone(NOTE_A4,100);
 				safetyGuard = 0;
-				eeprom::restoreFromSDFile(dumpFilename);
-                        	interface::popScreen();
+				itemSelected = 1;
 			}
-                        break;
-                case 2:
-                        //Erase
+			break;
+		case 2:
+			//Erase
 			safetyGuard ++;
 			if ( safetyGuard > 3 ) {
 				safetyGuard = 0;
-				Piezo::setTone(NOTE_A4,100);
-				eeprom::erase();
-                        	interface::popScreen();
+				itemSelected = 2;
 			}
-                        break;
-        }
+			break;
+	}
+}
+
+void EepromMenu::notifyButtonPressed(ButtonArray::ButtonName button) {
+	if ( warningScreen ) {
+		switch (button) {
+			case ButtonArray::UP:
+				warningScreen = false;
+				return;
+			default:
+				Menu::notifyButtonPressed(ButtonArray::LEFT);
+				return;
+		}
+
+		return;
+	}
+
+        if ( button == ButtonArray::DOWN || button == ButtonArray::LEFT ||
+	     button == ButtonArray::RIGHT )
+		safetyGuard = 0;
+
+	Menu::notifyButtonPressed(button);
 }
 
 #endif

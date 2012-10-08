@@ -66,13 +66,11 @@ void erase() {
 #ifdef EEPROM_MENU_ENABLE
 
 //Saves the eeprom to filename on the sd card
-bool saveToSDFile(const prog_char *filename) {
+bool saveToSDFile(const char *filename) {
 	uint8_t v;
-	char fname[16];
 
 	//Open the file for writing
-	strlcpy_P(fname, filename, sizeof(fname));
-	if ( sdcard::startCapture(fname) != sdcard::SD_SUCCESS )	return false;
+	if ( sdcard::startCapture((char *)filename) != sdcard::SD_SUCCESS )	return false;
 
 	//Write the eeprom contents to the file
         for (uint16_t i = 0; i < EEPROM_SIZE; i ++ ) {
@@ -87,12 +85,10 @@ bool saveToSDFile(const prog_char *filename) {
 }
 
 //Restores eeprom from filename on the sdcard
-bool restoreFromSDFile(const prog_char *filename) {
+bool restoreFromSDFile(const char *filename) {
 	uint8_t v;
-	char fname[16];
 
-	strlcpy_P(fname, filename, sizeof(fname));
-	if ( sdcard::startPlayback(fname) != sdcard::SD_SUCCESS )	return false;
+	if ( sdcard::startPlayback((char *)filename) != sdcard::SD_SUCCESS )	return false;
 
         for (uint16_t i = 0; i < EEPROM_SIZE; i ++ ) {
 		if ( sdcard::playbackHasNext() ) {
