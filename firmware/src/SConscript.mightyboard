@@ -134,6 +134,7 @@ if (os.environ.has_key('LOCALE')):
 
 if (os.environ.has_key('AVR_TOOLS_PATH')):
 	avr_tools_path = os.environ['AVR_TOOLS_PATH']
+	avr_tools_conf = os.environ['AVR_TOOLS_PATH'] + "/../etc/avrdude.conf"
 elif (os.environ.has_key('AVR32_HOME')):
 	avr_tools_path = os.environ['AVR32_HOME'] + '/bin'
 	avr_tools_conf =  os.environ['AVR32_HOME'] + "/etc/avrdude.conf"
